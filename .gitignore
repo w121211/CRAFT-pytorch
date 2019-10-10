@@ -10,3 +10,4 @@ data*/
 .ipynb_checkpoints
 __pycache__
 tmp
+my-dataset
