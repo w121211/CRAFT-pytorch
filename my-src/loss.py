@@ -13,24 +13,12 @@ def hard_negative_mining(pred, target, weight=None):
     :return: Online Hard Negative Mining loss
     """
     cpu_target = target.data.cpu().numpy()
-
     all_loss = F.mse_loss(pred, target, reduction="none")
 
-    if weight is not None:
-        cpu_weight = weight.data.cpu().numpy()
-        positive = np.where(
-            np.logical_and(cpu_target >= config.THRESHOLD_POSITIVE, cpu_weight != 0)
-        )[0]
-    else:
-        positive = np.where(cpu_target >= config.THRESHOLD_POSITIVE)[0]
-
+    positive = np.where(cpu_target >= config.THRESHOLD_POSITIVE)[0]
     negative = np.where(cpu_target <= config.THRESHOLD_NEGATIVE)[0]
 
-    if weight is not None:
-        positive_loss = all_loss[positive] * weight[positive]
-    else:
-        positive_loss = all_loss[positive]
-
+    positive_loss = all_loss[positive]
     negative_loss = all_loss[negative]
 
     negative_loss_cpu = np.argsort(-negative_loss.data.cpu().numpy())[
@@ -44,51 +32,28 @@ def hard_negative_mining(pred, target, weight=None):
 
 class Criterion(nn.Module):
     def __init__(self):
-        """Class which implements weighted OHNM with loss function being MSE Loss"""
         super(Criterion, self).__init__()
 
-    def forward(
-        self,
-        output,
-        character_map,
-        affinity_map,
-        character_weight=None,
-        affinity_weight=None,
-    ):
+    def forward(self, y, gt):
         """
-        :param output: prediction output of the model of shape [batch_size, 2, height, width]
-        :param character_map: target character map of shape [batch_size, height, width]
-        :param affinity_map: target affinity map of shape [batch_size, height, width]
-        :param character_weight: weight given to each pixel using weak-supervision for characters
-        :param affinity_weight: weight given to each pixel using weak-supervision for affinity
-        :return: loss containing loss of character heat map and affinity heat map reconstruction
+        Args:
+            y: (N, 1, H /2 , W /2)
+            gt: (N, 1, H /2 , W /2)
         """
+        N, C, H, W = y.shape
 
-        batch_size, channels, height, width = output.shape
+        # output = (
+        #     output.permute(0, 2, 3, 1)
+        #     .contiguous()
+        #     .view([batch_size * height * width, channels])
+        # )
 
-        output = (
-            output.permute(0, 2, 3, 1)
-            .contiguous()
-            .view([batch_size * height * width, channels])
-        )
+        # character = output[:, 0]
+        # affinity = output[:, 1]
 
-        character = output[:, 0]
-        affinity = output[:, 1]
+        # affinity_map = affinity_map.view([batch_size * height * width])
+        # character_map = character_map.view([batch_size * height * width])
 
-        affinity_map = affinity_map.view([batch_size * height * width])
-        character_map = character_map.view([batch_size * height * width])
+        # loss = hard_negative_mining(y, gt)
 
-        if character_weight is not None:
-            character_weight = character_weight.view([batch_size * height * width])
-
-        if affinity_weight is not None:
-            affinity_weight = affinity_weight.view([batch_size * height * width])
-
-        loss_character = hard_negative_mining(
-            character, character_map, character_weight
-        )
-        loss_affinity = hard_negative_mining(affinity, affinity_map, affinity_weight)
-
-        all_loss = loss_character + loss_affinity
-
-        return all_loss
+        return loss

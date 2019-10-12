@@ -69,7 +69,9 @@ class vgg16_bn(torch.nn.Module):
             512,
             "M",
         ]
-        features = models.VGG(make_layers(cfg, batch_norm=True, in_channels=6)).features
+        features = models.VGG(
+            make_layers(cfg, batch_norm=True, in_channels=4 + 3)
+        ).features
 
         self.slice1 = torch.nn.Sequential()
         self.slice2 = torch.nn.Sequential()
@@ -145,11 +147,11 @@ class double_conv(nn.Module):
 
 
 class CRAFT(nn.Module):
-    def __init__(self, pretrained=False, freeze=False):
+    def __init__(self, opt):
         super(CRAFT, self).__init__()
 
         """ Base network """
-        self.basenet = vgg16_bn(pretrained, freeze)
+        self.basenet = vgg16_bn(False, False)
 
         """ U network """
         self.upconv1 = double_conv(1024, 512, 256)

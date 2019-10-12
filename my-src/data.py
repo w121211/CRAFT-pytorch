@@ -10,7 +10,7 @@ import torch
 import torchvision.transforms as transforms
 
 
-class MyDataset(torch.utils.data.Dataset):
+class MaskDataset(torch.utils.data.Dataset):
     def __init__(self, opt):
         self.imsize = opt.imsize
         self.n_layers = opt.n_layers
@@ -28,8 +28,65 @@ class MyDataset(torch.utils.data.Dataset):
             ]
         )
 
-        # self.blur = GaussianSmoothing(3, 5, 5)
-        # self.blur.eval()
+        with open("/workspace/CRAFT-pytorch/my-dataset/train.json") as f:
+            data = json.load(f)
+
+        samples = []
+        for d in data:
+            for i in range(opt.n_layers):
+                samples.append(
+                    (d["im"], d["masks"][0:i], d["masks"][i], d["labels"][i])
+                )  # (im, cur_masks, target_mask, target_label)
+        self.samples = samples
+
+    def __getitem__(self, index):
+        """
+        Returns:
+            image: (4=(RGBA), H, W)
+            cur_masks: (n_layers, H, W)
+            target_mask: (1, H, W)
+            # target_class: (1, H, W)
+            param: ()
+        """
+        im, cur_masks, target_mask, target_label = self.samples[index]
+        cur_masks = [self.trans_mask(Image.open(p)) for p in cur_masks]
+        cur_masks += [
+            torch.zeros((1, self.imsize, self.imsize))
+            for _ in range(self.n_layers - len(cur_masks))
+        ]
+        # try:
+        #     torch.cat(cur_masks, dim=0)
+        # except:
+        #     for m in cur_masks:
+        #         print(m.shape)
+
+        return (
+            self.trans_im(Image.open(im)),
+            torch.cat(cur_masks, dim=0),
+            self.trans_target_mask(Image.open(target_mask)),
+        )
+
+    def __len__(self):
+        return len(self.samples)
+
+
+class ParamDataset(torch.utils.data.Dataset):
+    def __init__(self, opt):
+        self.imsize = opt.imsize
+        self.n_layers = opt.n_layers
+        self.trans_im = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize([0.5, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5]),
+            ]
+        )
+        self.trans_mask = transforms.Compose([transforms.ToTensor()])
+        self.trans_target_mask = transforms.Compose(
+            [
+                transforms.Resize((int(opt.imsize / 2), int(opt.imsize / 2))),
+                transforms.ToTensor(),
+            ]
+        )
 
         with open("/workspace/CRAFT-pytorch/my-dataset/train/indices.json") as f:
             data = json.load(f)
@@ -54,6 +111,7 @@ class MyDataset(torch.utils.data.Dataset):
             cur_masks: (n_layers, H, W)
             target_mask: (1, H, W)
             # target_class: (1, H, W)
+            param: ()
         """
         im, cur_masks, target_mask, target_class = self.samples[index]
         cur_masks = [self.trans_mask(Image.open(p)) for p in cur_masks]
@@ -70,3 +128,4 @@ class MyDataset(torch.utils.data.Dataset):
 
     def __len__(self):
         return len(self.samples)
+

@@ -13,10 +13,9 @@ import blocks as bk
 
 def get_parameters():
     parser = argparse.ArgumentParser()
-
     parser.add_argument("--imsize", type=int, default=128)
     parser.add_argument("--n_samples", type=int, default=100)
-    parser.add_argument("--save_to", type=str, default="../../my-dataset/train")
+    parser.add_argument("--save_to", type=str, default="../../my-dataset")
 
     return parser.parse_args()
 
@@ -30,7 +29,7 @@ class Sampler:
         im = Image.new("RGBA", (self.imsize, self.imsize))
         anns = dict()
 
-        im_t, mask_t, class_t, params_t = [], [], [], []
+        im_t, mask_t, label_t, params_t = [], [], [], []
         for bk in self.blocks:
             bk.sample(self.imsize)
             im.alpha_composite(bk.im)
@@ -43,15 +42,8 @@ class Sampler:
                     (self.imsize, self.imsize), np.expand_dims(bk.label["box"], 0)
                 )
             )
-            class_t.append(bk.label["class"])
-            params_t.append(bk.label["params"])
-            
-            # labels.append(bk.label)
-            # print(bk.label)
-            # mask, bw = create_mask(
-            #     (self.imsize, self.imsize), np.expand_dims(to_bbox(bk.label["box"]), 0)
-            # )
-
+            label_t.append(bk.label["class"])
+            # params_t.append(bk.label["params"])
             # layers.append(
             #     (
             #         bk.label["class"],
@@ -60,23 +52,22 @@ class Sampler:
             #         ),
             #     )
             # )
-        return im, anns, [im_t, mask_t, class_t, params_t]
+        return im, anns, (im_t, mask_t, label_t, params_t)
 
 
 if __name__ == "__main__":
     opt = get_parameters()
 
-    os.makedirs(os.path.join(opt.save_to, "images"), exist_ok=True)
-    os.makedirs(os.path.join(opt.save_to, "layers"), exist_ok=True)
+    os.makedirs(os.path.join(opt.save_to, "train"), exist_ok=True)
 
     rect = bk.Rectangle()
-    # jpg = bk.Photo("/workspace/CoordConv/data/flickr")
-    jpg = bk.Photo("/workspace/CoordConv-pytorch/data/facebook")
+    jpg = bk.Photo("/workspace/CoordConv/data/flickr")
+    # jpg = bk.Photo("/workspace/CoordConv-pytorch/data/facebook")
     text = bk.Text()
-    # bg = bk.Background([bk.Rectangle(), bk.Photo("/workspace/CoordConv/data/flickr")])
-    bg = bk.Background(
-        [bk.Rectangle(), bk.Photo("/workspace/CoordConv-pytorch/data/facebook")]
-    )
+    bg = bk.Background([bk.Rectangle(), bk.Photo("/workspace/CoordConv/data/flickr")])
+    # bg = bk.Background(
+    #     [bk.Rectangle(), bk.Photo("/workspace/CoordConv-pytorch/data/facebook")]
+    # )
     samplers = [
         Sampler([bg, jpg, rect], opt),
         Sampler([bg, jpg, text], opt),
@@ -91,17 +82,22 @@ if __name__ == "__main__":
 
     indices = []
     for i in range(opt.n_samples):
-        im, anns, layers = random.choice(samplers).sample()
-        p = os.path.join(opt.save_to, "images", "{}.png".format(i))
+        im, anns, (im_t, mask_t, label_t, params_t) = random.choice(samplers).sample()
+        p = os.path.join(opt.save_to, "train", "{}.png".format(i))
         im.save(p)
 
-        l = [[], []]
-        for j, (c, mask) in enumerate(layers):
-            _p = os.path.join(opt.save_to, "layers", "{}_{}_{}.png".format(i, j, c))
-            mask.save(_p)
-            l[0].append(os.path.abspath(_p))
-            l[1].append(c)
-        indices.append({"id": i, "image": os.path.abspath(p), "layers": l})
+        masks = []
+        for j, (im, mask, label) in enumerate(zip(im_t, mask_t, label_t)):
+            p_mask = os.path.join(
+                opt.save_to, "train", "{}_mask_{}_{}.png".format(i, j, label)
+            )
+            # p_canvas = os.path.join(opt.save_to, "canvas_{}_{}_{}.png".format(i, j, c))
+            mask.save(p_mask)
+            masks.append(os.path.abspath(p_mask))
+
+        indices.append(
+            {"id": i, "im": os.path.abspath(p), "masks": masks, "labels": label_t}
+        )
 
         # count = 0
         # for k, v in anns.items():
@@ -116,5 +112,5 @@ if __name__ == "__main__":
         #         )
         #         count += 1
 
-    with open(os.path.join(opt.save_to, "indices.json"), "w") as f:
+    with open(os.path.join(opt.save_to, "train.json"), "w") as f:
         json.dump(indices, f)

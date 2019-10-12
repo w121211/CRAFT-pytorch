@@ -54,6 +54,11 @@ class Block(ABC):
             param[k] = fn(param, imsize)
         self.param = param
 
+    # def param_labels(self, val=["_rgb", "textsize"], cat=["i_font", "i_photo"]):
+    #     # params = {k: self.param[k] for k in val if self.param.has_key(k) else }
+    #     # np.concatenate()
+    #     return vals, cats
+
 
 def rgb(param, imsize):
     rgb = (param["_rgb"] * 256).astype(np.uint8)

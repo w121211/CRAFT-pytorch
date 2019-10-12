@@ -24,58 +24,45 @@ from torchvision.utils import save_image
 from config import get_parameters
 
 # from utils import tensor2var, denorm
-from models.craft import CRAFT
-from loss import Criterion
-from data import MyDataset
-
-
-def denormalize(x, mean, std):
-    dtype = x.dtype
-    mean = torch.as_tensor(mean, dtype=dtype, device=x.device)
-    std = torch.as_tensor(std, dtype=dtype, device=x.device)
-    std_inv = 1 / (std + 1e-7)
-    mean_inv = -mean * std_inv
-    x.sub_(mean_inv[None, :, None, None]).div_(std_inv[None, :, None, None])
-    return x
-
+from model.gan import Generator, VAEEncoder
+from data import ParamDataset
 
 class Trainer(object):
     def __init__(self, data_loader, opt):
         self.opt = opt
         self.dataloader = dataloader
-        self.model = CRAFT(opt).to(opt.device)
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-3)
-        self.cirterion = Criterion()
+        self.G = Generator(opt).to(opt.device)
+        self.Enc = VAEEncoder(opt).to(opt.device)
+
+        self.optimizer_g = torch.optim.Adam(self.G.parameters(), lr=1e-3)
+        self.optimizer_enc = torch.optim.Adam(self.Enc.parameters(), lr=1e-3)
+        # self.cirterion = Criterion()
+        self.criterion = nn.MSELoss()
 
     def train(self):
-        self.model.train()
-
-        # iterator = tqdm(dataloader)
-        # def change_lr(no_i):
-        #     for i in config.lr:
-        #         if i == no_i:
-        #             print("Learning Rate Changed to ", config.lr[i])
-        #             for param_group in optimizer.param_groups:
-        #                 param_group["lr"] = config.lr[i]
+        self.G.train()
+        self.Enc.train()
 
         batches_done = 0
         for epoch in range(opt.n_epochs):
-            for i, (image, cur_masks, target_mask) in enumerate(self.dataloader):
-                # change_lr(no)
-                image = image.to(opt.device)
-                cur_masks = cur_masks.to(opt.device)
-                target_mask = target_mask.to(opt.device)
+            for i, (target_im, obj_mask, obj_class, canvas, gt_params) in enumerate(
+                self.dataloader
+            ):
+                target_im = target_im.to(opt.device)
+                obj_mask = obj_mask.to(opt.device)
+                obj_class = obj_class.to(opt.device)
+                canvas = canvas.to(opt.device)
+                gt_params = gt_params.to(opt.device)
 
-                y = self.model(image)
-                loss = self.cirterion(y, target_mask)
-                # loss = (
-                #     loss_criterian(output, weight, weight_affinity).mean()
-                #     / config.optimizer_iteration
-                # )
-                # all_loss.append(loss.item() * config.optimizer_iteration)
-                self.optimizer.zero_grad()
+                z = self.Enc(target_im, obj_mask, obj_class, canvas)
+                y = self.G(z, obj_class)  # predicted params
+                loss = self.criterion(y, gt_params)
+
+                self.optimizer_g.zero_grad()
+                self.optimizer_enc.zero_grad()
                 loss.backward()
-                self.optimizer.step()
+                self.optimizer_g.step()
+                self.optimizer_enc.step()
 
                 if batches_done % opt.sample_interval == 0:
                     print(
