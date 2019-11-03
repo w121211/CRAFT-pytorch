@@ -26,7 +26,7 @@ for i in range(2 * extent):
 heatmap = (heatmap / np.max(heatmap) * 255).astype(np.uint8)
 
 
-def create_mask(imsize: tuple, bboxes: np.array):
+def create_mask(imsize: tuple, bboxes: np.ndarray) -> Image:
     """
     Args:
         imsize: (w, h)

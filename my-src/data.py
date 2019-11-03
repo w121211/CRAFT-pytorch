@@ -10,7 +10,7 @@ import torch
 import torchvision.transforms as transforms
 
 
-class MaskDataset(torch.utils.data.Dataset):
+class BaseDataset(torch.utils.data.Dataset):
     def __init__(self, opt):
         self.imsize = opt.imsize
         self.n_layers = opt.n_layers
@@ -21,6 +21,22 @@ class MaskDataset(torch.utils.data.Dataset):
             ]
         )
         self.trans_mask = transforms.Compose([transforms.ToTensor()])
+
+        with open("/workspace/CRAFT-pytorch/my-dataset/train.json") as f:
+            data = json.load(f)
+        self.data = data
+        self.samples = []
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, index):
+        raise NotImplementedError()
+
+
+class MaskDataset(BaseDataset):
+    def __init__(self, opt):
+        super().__init__(opt)
         self.trans_target_mask = transforms.Compose(
             [
                 transforms.Resize((int(opt.imsize / 2), int(opt.imsize / 2))),
@@ -28,14 +44,11 @@ class MaskDataset(torch.utils.data.Dataset):
             ]
         )
 
-        with open("/workspace/CRAFT-pytorch/my-dataset/train.json") as f:
-            data = json.load(f)
-
         samples = []
-        for d in data:
+        for d in self.data:
             for i in range(opt.n_layers):
                 samples.append(
-                    (d["im"], d["masks"][0:i], d["masks"][i], d["labels"][i])
+                    (d["im"], d["masks"][0:i], d["masks"][i], d["classes"][i])
                 )  # (im, cur_masks, target_mask, target_label)
         self.samples = samples
 
@@ -43,12 +56,12 @@ class MaskDataset(torch.utils.data.Dataset):
         """
         Returns:
             image: (4=(RGBA), H, W)
-            cur_masks: (n_layers, H, W)
+            cur_masks: (max_layers, H, W)
             target_mask: (1, H, W)
             # target_class: (1, H, W)
             param: ()
         """
-        im, cur_masks, target_mask, target_label = self.samples[index]
+        im, cur_masks, target_mask, target_class = self.samples[index]
         cur_masks = [self.trans_mask(Image.open(p)) for p in cur_masks]
         cur_masks += [
             torch.zeros((1, self.imsize, self.imsize))
@@ -64,68 +77,36 @@ class MaskDataset(torch.utils.data.Dataset):
             self.trans_im(Image.open(im)),
             torch.cat(cur_masks, dim=0),
             self.trans_target_mask(Image.open(target_mask)),
+            torch.tensor(target_class).long(),
         )
 
-    def __len__(self):
-        return len(self.samples)
 
+class ParamDataset(BaseDataset):
+    params = ("_rgb", "_a")
 
-class ParamDataset(torch.utils.data.Dataset):
     def __init__(self, opt):
-        self.imsize = opt.imsize
-        self.n_layers = opt.n_layers
-        self.trans_im = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Normalize([0.5, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5]),
-            ]
-        )
-        self.trans_mask = transforms.Compose([transforms.ToTensor()])
-        self.trans_target_mask = transforms.Compose(
-            [
-                transforms.Resize((int(opt.imsize / 2), int(opt.imsize / 2))),
-                transforms.ToTensor(),
-            ]
-        )
-
-        with open("/workspace/CRAFT-pytorch/my-dataset/train/indices.json") as f:
-            data = json.load(f)
-
+        super().__init__(opt)
         samples = []
-        for d in data:
-            for i in range(opt.n_layers):
-                samples.append(
-                    (
-                        d["image"],
-                        d["layers"][0][0:i],
-                        d["layers"][0][i],
-                        d["layers"][1][i],
-                    )
-                )  # (im, cur_masks, target_mask, target_class)
+        for d in self.data:
+            for x in zip(d["masks"], d["cats"], d["params"]):
+                samples.append((d["im"], *x))
         self.samples = samples
 
     def __getitem__(self, index):
         """
         Returns:
             image: (4=(RGBA), H, W)
-            cur_masks: (n_layers, H, W)
-            target_mask: (1, H, W)
-            # target_class: (1, H, W)
-            param: ()
+            mask_t: (1, H, W)
+            class_t: (1), in int
+            param_t: (n_params)
         """
-        im, cur_masks, target_mask, target_class = self.samples[index]
-        cur_masks = [self.trans_mask(Image.open(p)) for p in cur_masks]
-        cur_masks += [
-            torch.zeros((1, self.imsize, self.imsize))
-            for _ in range(self.n_layers - len(cur_masks))
-        ]
-
+        im, mask, cat, param = self.samples[index]
+        p = []
+        for k in self.params:
+            p += param[k]
         return (
             self.trans_im(Image.open(im)),
-            torch.cat(cur_masks, dim=0),
-            self.trans_target_mask(Image.open(target_mask)),
+            self.trans_mask(Image.open(mask)),
+            torch.tensor(cat),
+            torch.tensor(p),
         )
-
-    def __len__(self):
-        return len(self.samples)
-

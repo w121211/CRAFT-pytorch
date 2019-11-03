@@ -1,63 +1,26 @@
-from __future__ import absolute_import
-
 import glob
 import random
 from abc import ABC, abstractmethod
+from collections import OrderedDict
+from typing import List, Tuple, Union, Callable, Dict
 
 import numpy as np
+import cairo
 from PIL import Image, ImageDraw, ImageFont
-from gym import spaces
 from faker import Faker
 
+CLASSES = ("Null", "Rectangle", "Photo", "Line")
 
-class Block(ABC):
-    def __init__(self):
-        super(Block, self).__init__()
-        self.param_space = []
-        self._im = None
-        self._annotations = None
-        self.param = None
-        self.label = None
 
-    @property
-    def im(self):
-        if self._im is None:
-            raise Exception()
-        else:
-            return self._im
+# define types
+Param = Dict[str, Union[int, float, np.ndarray]]
 
-    @property
-    def annotations(self):
-        if self._annotations is None:
-            raise Exception()
-        else:
-            return self._annotations
 
-    def _reset(self):
-        self._im = None
-        self.param = None
-        self.label = None
+def denorm(key: str, scale: Union[int, float], dtype=np.uint8) -> Callable:
+    def fn(param, imsize):
+        return tuple((param[key] * scale).astype(dtype))
 
-    def _override_param_space(self, dst_space):
-        dst = dict()
-        for k, fn in dst_space:
-            dst[k] = fn
-        self.param_space = [
-            (k, dst[k]) if k in dst.keys() else (k, fn) for k, fn in self.param_space
-        ]
-
-    @abstractmethod
-    def sample(self, imsize):
-        self._reset()
-        param = dict()
-        for k, fn in self.param_space:
-            param[k] = fn(param, imsize)
-        self.param = param
-
-    # def param_labels(self, val=["_rgb", "textsize"], cat=["i_font", "i_photo"]):
-    #     # params = {k: self.param[k] for k in val if self.param.has_key(k) else }
-    #     # np.concatenate()
-    #     return vals, cats
+    return fn
 
 
 def rgb(param, imsize):
@@ -73,122 +36,247 @@ def to_imsize(key):
     return fn
 
 
-def wh(param, imsize):
-    wh = (param["_wh"] * imsize).astype(np.int16)
-    return tuple(wh)
-
-
-def box(param, imsize):
+def bbox(param: dict, imsize: int) -> Tuple[int, int, int, int]:
     _xy = param["_cxy"] - param["_wh"] / 2
     wh = (param["_wh"] * imsize).astype(np.int16)
     xy = (_xy * imsize).astype(np.int16)
-    box = np.concatenate((xy, xy + wh))
-    return tuple(box)
+    return tuple(np.concatenate((xy, xy + wh)))
+
+
+class Block(ABC):
+    def __init__(self, pspace: OrderedDict, param={}):
+        super(Block, self).__init__()
+        self._im = None
+        self._annotations = None
+        self.label = None
+        self.param = None
+        pspace.update(param)
+        self.pspace = pspace
+
+    @abstractmethod
+    def sample(self, imsize):
+        self.param = None
+        p = dict()
+        for k, v in self.pspace.items():
+            if callable(v):
+                p[k] = v(p, imsize)
+            else:
+                p[k] = v
+        self.param = p
+
+    def update_param(self, bbox: Tuple[int, int, int, int], imsize: int):
+        """Given bbox, update param's `wh`, `cxy`. Used for undetermined shape"""
+        self.param["bbox"] = bbox
+        if bbox is None:
+            raise Exception("")
+        xy0 = np.array(bbox[:2], dtype=np.float32)
+        xy1 = np.array(bbox[2:], dtype=np.float32)
+        self.param["_wh"] = (xy1 - xy0) / imsize
+        self.param["_cxy"] = ((xy1 + xy0) / 2) / imsize
+
+    def info(self, cmask="Null"):
+        # self._annotations = [(type(self).__name__, im)]
+        return {
+            "cat": CLASSES.index(type(self).__name__),
+            "cmask": CLASSES.index(cmask),  # fill cmask
+            "bbox": self.param["bbox"],
+            "param": self.param,
+        }
 
 
 class Rectangle(Block):
-    def __init__(self):
-        super(Rectangle, self).__init__()
-        self.param_space = [
-            ("_wh", lambda *args: np.random.normal(0.4, 0.2, 2)),
-            ("_cxy", lambda *args: np.random.uniform(0, 1, 2)),
-            ("_rgb", lambda *args: np.random.uniform(0, 1, 3)),
-            ("rgb", rgb),
-            ("box", box),
-        ]
+    def __init__(self, param={}):
+        pspace = OrderedDict(
+            [
+                ("_wh", lambda *a: np.random.normal(0.4, 0.2, 2)),
+                ("_cxy", lambda *a: np.random.uniform(0, 1, 2)),
+                ("_rgb", lambda *a: np.random.uniform(0, 1, 3)),
+                ("_a", lambda *a: np.random.uniform(0, 1, 1)),
+                ("rgb", denorm("_rgb", 256)),
+                ("bbox", bbox),
+            ]
+        )
+        super().__init__(pspace, param)
 
     def sample(self, imsize):
         super().sample(imsize)
         im = Image.new("RGBA", (imsize, imsize))
         draw = ImageDraw.Draw(im)
-        draw.rectangle(self.param["box"], fill=self.param["rgb"], outline=None)
-        self._im = im
-        self._annotations = [(type(self).__name__, im)]
-        self.label = {"class": "rectangle", "box": self.param["box"]}
+        draw.rectangle(self.param["bbox"], fill=self.param["rgb"], outline=None)
+        return im, self.info()
+
+
+class Ellipse(Rectangle):
+    def sample(self, imsize):
+        super().sample(imsize)
+        im = Image.new("RGBA", (imsize, imsize))
+        draw = ImageDraw.Draw(im)
+        draw.ellipse(self.param["bbox"], fill=self.param["rgb"], outline=None)
+        return im, self.info()
 
 
 class Photo(Block):
-    def __init__(self, root):
-        super(Photo, self).__init__()
-        self.samples = glob.glob(root + "/*.jpg")
-        self.param_space = [
-            ("_wh", lambda *args: np.random.normal(0.8, 0.2, 2)),
-            ("_cxy", lambda *args: np.random.uniform(0, 1, 2)),
-            ("_rgb", lambda *args: np.random.uniform(0, 1, 3)),
-            ("rgb", rgb),
-            ("wh", to_imsize("_wh")),
-            ("cxy", to_imsize("_cxy")),
-            ("box", box),
-            ("idx", lambda *args: np.random.randint(0, len(self.samples), 1)[0]),
-        ]
+    def __init__(self, root, param={}):
+        # super().__init__(param)
+        self.samples = glob.glob(root + "/*.jpg") + glob.glob(root + "/*.png")
+        pspace = OrderedDict(
+            [
+                ("_rgb", lambda *a: np.array([0., 0., 0.])),
+                ("_a", lambda *a: np.array([0.])),
+                ("_wh", lambda *a: np.random.normal(0.8, 0.2, 2)),
+                ("_cxy", lambda *a: np.random.uniform(0, 1, 2)),
+                (
+                    "i_photo",
+                    lambda *a: np.random.randint(0, len(self.samples), 1)[0],
+                ),
+                ("wh", to_imsize("_wh")),
+                ("cxy", to_imsize("_cxy")),
+                ("bbox", bbox),
+                ("repeat", lambda *a: False),
+            ]
+        )
+        super().__init__(pspace, param)
 
     def sample(self, imsize):
         super().sample(imsize)
         cx, cy = self.param["cxy"]
         im = Image.new("RGBA", (imsize, imsize))
-        p = Image.open(self.samples[self.param["idx"]])
-        p.thumbnail(self.param["wh"])
-        im.paste(p, (int(cx - p.width / 2), int(cy - p.height / 2)))
-        self._im = im
-        self._annotations = [(type(self).__name__, im)]
-        self.label = {"class": "photo", "box": im.getbbox()}
+        p = Image.open(self.samples[self.param["i_photo"]])
+
+        if self.param["repeat"]:
+            for i in range(0, self.param["wh"][0], p.size[0]):
+                for j in range(0, self.param["wh"][1], p.size[1]):
+                    im.paste(p, (i, j))
+                    # print(i, j)
+        else:
+            p.thumbnail(self.param["wh"])
+            im.paste(p, (int(cx - p.width / 2), int(cy - p.height / 2)))
+
+        self.update_param(im.getbbox(), imsize)
+        return im, self.info()
 
 
-class Text(Block):
+
+class Line(Block):
+    fake = Faker()
+    fonts = []
+    for f in glob.glob("/workspace/mmdetection/my_dataset/fonts_en/**/*.ttf"):
+        try:
+            _ = ImageFont.truetype(f)
+            fonts.append(f)
+        except:
+            pass
+    
     def __init__(self):
-        super(Text, self).__init__()
-        self.fake = Faker()
-
-        fonts = []
-        for f in glob.glob("/workspace/mmdetection/my_dataset/fonts_en/**/*.ttf"):
-            try:
-                _ = ImageFont.truetype(f)
-                fonts.append(f)
-            except:
-                pass
-        self.fonts = fonts
-        self.param_space = [
-            ("i_font", lambda *args: np.random.randint(0, len(self.fonts), 1)[0]),
-            ("textsize", lambda *args: int(np.random.normal(12, 3, 1)[0])),
-            ("_cxy", lambda *args: np.random.uniform(0, 1, 2)),
-            ("_rgb", lambda *args: np.random.uniform(0, 1, 3)),
-            ("rgb", rgb),
-            ("cxy", to_imsize("_cxy")),
-        ]
+        pspace = OrderedDict(
+            [
+                ("i_font", lambda *a: np.random.randint(0, len(self.fonts), 1)[0]),
+                ("textsize", lambda *a: int(np.clip(np.random.normal(5, 3, 1), 1, None)[0])),
+                ("_rgb", lambda *a: np.random.uniform(0, 1, 3)),
+                ("_a", lambda *a: np.array([1.])),
+                ("_cxy", lambda *a: np.random.uniform(0, 1, 2)),
+                ("rgb", rgb),
+                ("cxy", to_imsize("_cxy")),
+                # ("a"),
+                # ("stroke_w"),
+                # ("stoke_rgb"),
+            ]
+        )
+        super().__init__(pspace)
 
     def sample(self, imsize):
         super().sample(imsize)
-
-        text = self.fake.sentence(nb_words=7, variable_nb_words=True)
+        text = self.fake.sentence(nb_words=3, variable_nb_words=True)
         font = ImageFont.truetype(
             self.fonts[self.param["i_font"]], self.param["textsize"]
         )
-
         w, h = font.getsize(text)
         cx, cy = self.param["cxy"]
 
         im = Image.new("RGBA", (imsize, imsize))
         draw = ImageDraw.Draw(im)
         draw.text((cx - w / 2, cy - h / 2), text, font=font, fill=self.param["rgb"])
-        self._im = im
-        self._annotations = [(type(self).__name__, im)]
-        self.label = {"class": "text", "box": im.getbbox()}
+
+        self.update_param(im.getbbox(), imsize)
+        return im, self.info()
 
 
-class Icon:
-    pass
+class Group(Block):
+    def __init__(self, blocks: list, cat=None):
+        self.blocks = blocks
+        if cat is not None and cat not in CLASSES:
+            raise Exception("`cat` must be included in `CLASSES`")
+        self.cat = cat  # 判斷是否輸出整個group
+
+    def sample(self, imsize):
+        im = Image.new("RGBA", (imsize, imsize))
+        info = []
+        for bk in self.blocks:
+            _im, _info = bk.sample(imsize)
+            im.alpha_composite(_im)
+            info.append(_info)
+        return im, info
+        # return zip(*[bk.sample(imsize) for bk in self.blocks])
 
 
-class Effect:
-    pass
+class CropMask(Block):
+    def __init__(self, cmask: Block, base: Rectangle):
+        self.cmask = cmask
+        self.base = base
+
+    def sample(self, imsize):
+        cim, _ = self.cmask.sample(imsize)
+        p = self.cmask.param
+        self.base.pspace.update({"_wh": p["_wh"], "_cxy": p["_cxy"]})
+        bim, binfo = self.base.sample(imsize)
+
+        im = Image.composite(bim, Image.new("RGBA", (imsize, imsize)), cim)
+        binfo.update({"cmask": binfo["cat"]})
+
+        return im, binfo
 
 
-class Component(Block):
-    pass
-
-
-class Background(Block):
+class Choice(Block):
     def __init__(self, choices=[]):
+        self.choices = choices
+
+    def sample(self, imsize):
+        return random.choice(self.choices).sample(imsize)
+
+
+class GradientFill(Rectangle):
+    CLASSES = ("linear", "radial")
+
+    def __init__(self):
+        super().__init__()
+        psapce = OrderedDict(
+            [
+                ("i_grad", lambda *a: np.random.randint(0, len(self.CLASSES), 1)[0]),
+                ("n_points", lambda *a: np.random.uniform(0, 1, 3)),
+                ("_nd_rgb", lambda *a: np.random.uniform(0, 1, 3)),
+            ]
+        )
+        self.pspace.update(psapce)
+
+    def sample(self, imsize):
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 200, 200)
+        cr = cairo.Context(surface)
+        cr.scale(200, 200)
+        pat = cairo.LinearGradient(0.0, 0.0, 0.0, 1.0)
+        pat.add_color_stop_rgba(1, 0, 0, 0, 1)
+        pat.add_color_stop_rgba(0, 1, 1, 1, 1)
+        cr.rectangle(0, 0, 1, 1)
+        cr.set_source(pat)
+        cr.fill()
+
+        data = np.ndarray(
+            shape=(200, 200, 4), dtype=np.uint8, buffer=surface.get_data()
+        )
+        im = Image.fromarray(data)
+        return im, self.info()
+
+class Filter(Rectangle):
+    def __init__(self, mask):
         super().__init__()
         self.param_space = [
             ("i_bk", lambda *acc: np.random.randint(0, len(choices), 1)[0]),
@@ -199,7 +287,7 @@ class Background(Block):
             # ("cxy", to_imsize("_cxy")),
             # ("wh", to_imsize("_wh")),
         ]
-        for bk in choices:
+        for bk in blocks:
             bk._override_param_space(self.param_space)
         self.choices = choices
 
@@ -210,3 +298,7 @@ class Background(Block):
         self._im = bk.im
         self._annotations = bk.annotations
         self.label = bk.label
+
+
+class Icon:
+    pass

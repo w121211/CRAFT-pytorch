@@ -9,7 +9,7 @@ class VAEEncoder(nn.Module):
 
         self.n_masks = opt.n_masks
         self.conv = nn.Sequential(
-            nn.Conv2d(3 + opt.n_masks, 16, 4, 2, 1),  # 16,32,32
+            nn.Conv2d(4 + 1, 16, 4, 2, 1),  # 16,32,32
             # nn.BatchNorm2d(16),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Conv2d(16, 32, 4, 2, 1),  # 32,16,16
@@ -25,12 +25,15 @@ class VAEEncoder(nn.Module):
         )
 
         out_size = opt.imsize // 2 ** 4
-        self.fc = nn.Linear(128 * out_size ** 2, opt.n_masks * opt.z_dim)
+        # self.fc = nn.Linear(128 * out_size ** 2, opt.n_masks * opt.z_dim)
+        self.fc = nn.Linear(128 * out_size ** 2, opt.z_dim)
 
     def forward(self, x):
         N = x.size(0)
         x = self.conv(x).view(N, -1)
-        x = self.fc(x).view(N, self.n_masks, -1)
+        # x = self.fc(x).view(N, self.n_masks, -1)
+        x = self.fc(x).view(N, -1)
+
         # mu = self.fc1(x)
         # # logvar = self.fc2(x)
         # # std = torch.exp(0.5 * logvar)

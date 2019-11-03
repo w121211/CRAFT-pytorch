@@ -1,38 +1,70 @@
 # %%writefile /content/CoordConv/gan-textbox/train_toy_param_comnist_vae.py
 import os
-import glob
-import random
-import time
-import datetime
-from collections import OrderedDict
-
-import numpy as np
-import PIL
-from PIL import Image, ImageDraw, ImageFont, ImageColor
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset
-
-# from torchvision import datasets
+from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 from torchvision.utils import save_image
 
-# from models.craft import CRAFTGenerator
-# from models.wgan import Generator, Discriminator, compute_gradient_penalty
 from config import get_parameters
-
-# from utils import tensor2var, denorm
-from model.gan import Generator, VAEEncoder
+from model.gan import VAEEncoder
 from data import ParamDataset
+from generator.blocks import CLASSES
+
+
+class Generator(nn.Module):
+    def __init__(self, opt):
+        super(Generator, self).__init__()
+        # self.opt = opt
+        self.imsize = opt.imsize
+        self.device = opt.device
+        self.class_dim = len(CLASSES)  # mask class
+        regressor_dim = 4
+
+        # self.model = self._classifier()
+        # regressor mask, 利用mask class來幫忙regressor推測param
+        self.rg_mask = nn.Linear(self.class_dim, regressor_dim, bias=False)
+        self.rg = nn.Sequential(
+            nn.Linear(opt.z_dim, 64),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(64, 128),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(128, 128),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(128, regressor_dim),
+        )
+
+    def _classifier(self, z_dim, n_classes):
+        return nn.Sequential(
+            nn.Linear(z_dim, 64),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(64, 128),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(128, 128),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(128, n_classes),
+        )
+
+    def forward(self, z, cat):
+        """
+        Args:
+            z: (N, n_masks, z_dim), features of image
+            cat: (N, n_labels), mask class, one hot
+        Return: (N, )
+        """
+        cat = F.one_hot(cat, self.class_dim).float()
+        mask = self.rg_mask(cat)
+        return self.rg(z) * mask
+
 
 class Trainer(object):
     def __init__(self, data_loader, opt):
         self.opt = opt
         self.dataloader = dataloader
-        self.G = Generator(opt).to(opt.device)
         self.Enc = VAEEncoder(opt).to(opt.device)
+        self.G = Generator(opt).to(opt.device)
 
         self.optimizer_g = torch.optim.Adam(self.G.parameters(), lr=1e-3)
         self.optimizer_enc = torch.optim.Adam(self.Enc.parameters(), lr=1e-3)
@@ -40,23 +72,24 @@ class Trainer(object):
         self.criterion = nn.MSELoss()
 
     def train(self):
-        self.G.train()
         self.Enc.train()
+        self.G.train()
 
         batches_done = 0
         for epoch in range(opt.n_epochs):
-            for i, (target_im, obj_mask, obj_class, canvas, gt_params) in enumerate(
-                self.dataloader
-            ):
-                target_im = target_im.to(opt.device)
-                obj_mask = obj_mask.to(opt.device)
-                obj_class = obj_class.to(opt.device)
-                canvas = canvas.to(opt.device)
-                gt_params = gt_params.to(opt.device)
+            for i, (im, mask, cat, gt_param) in enumerate(self.dataloader):
+                # print(gt_param)
+                # print(im, mask, cat, gt_param)
+                # im = im.to(opt.device)
+                # mask = mask.to(opt.device)
+                x = torch.cat((im, mask), dim=1)
+                x = x.to(opt.device)
+                cat = cat.to(opt.device)
+                gt_param = gt_param.to(opt.device)
 
-                z = self.Enc(target_im, obj_mask, obj_class, canvas)
-                y = self.G(z, obj_class)  # predicted params
-                loss = self.criterion(y, gt_params)
+                z = self.Enc(x)
+                y = self.G(z, cat)  # predicted params
+                loss = self.criterion(y, gt_param)
 
                 self.optimizer_g.zero_grad()
                 self.optimizer_enc.zero_grad()
@@ -69,17 +102,17 @@ class Trainer(object):
                         "[Epoch %d/%d] [Batch %d/%d] [loss: %f]"
                         % (epoch, opt.n_epochs, i, len(dataloader), loss.item())
                     )
-                    save_image(
-                        # denormalize(fake_img, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]).data[
-                        #     :25
-                        # ],
-                        y.data[:9],
-                        os.path.join(
-                            self.opt.sample_path, "{:06d}_fake.png".format(batches_done)
-                        ),
-                        nrow=5,
-                        # normalize=True,
-                    )
+                    # save_image(
+                    #     # denormalize(fake_img, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]).data[
+                    #     #     :25
+                    #     # ],
+                    #     y.data[:9],
+                    #     os.path.join(
+                    #         self.opt.sample_path, "{:06d}_fake.png".format(batches_done)
+                    #     ),
+                    #     nrow=5,
+                    #     # normalize=True,
+                    # )
                 batches_done += 1
 
 
@@ -92,13 +125,12 @@ if __name__ == "__main__":
     os.makedirs(opt.model_save_path, exist_ok=True)
     os.makedirs(opt.sample_path, exist_ok=True)
     os.makedirs(opt.log_path, exist_ok=True)
-    os.makedirs(opt.attn_path, exist_ok=True)
 
     if opt.cuda:
         torch.backends.cudnn.benchmark = True
 
     dataloader = torch.utils.data.DataLoader(
-        MyDataset(opt), batch_size=opt.batch_size, shuffle=True
+        ParamDataset(opt), batch_size=opt.batch_size, shuffle=True
     )
 
     if opt.train:

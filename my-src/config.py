@@ -24,6 +24,8 @@ def get_parameters():
     parser.add_argument("--clip_value", type=float, default=0.01)
     parser.add_argument("--n_masks", type=int, default=2)
 
+    # parser.add_argument("--enc_in_dim", type=int, default=5)
+
     # Training setting
     parser.add_argument("--n_epochs", type=int, default=1000)
     parser.add_argument(

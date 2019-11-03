@@ -28,6 +28,7 @@ from model.craft import CRAFT
 
 # from loss import Criterion
 from data import MaskDataset
+from generator.blocks import CLASSES
 
 
 def denormalize(x, mean, std):
@@ -50,7 +51,6 @@ class Trainer(object):
 
     def train(self):
         self.model.train()
-
         # iterator = tqdm(dataloader)
         # def change_lr(no_i):
         #     for i in config.lr:
@@ -58,17 +58,22 @@ class Trainer(object):
         #             print("Learning Rate Changed to ", config.lr[i])
         #             for param_group in optimizer.param_groups:
         #                 param_group["lr"] = config.lr[i]
+        criterion = nn.CrossEntropyLoss()
 
         batches_done = 0
         for epoch in range(opt.n_epochs):
-            for i, (image, cur_masks, target_mask) in enumerate(self.dataloader):
+            for i, (image, cur_masks, target_mask, target_class) in enumerate(
+                self.dataloader
+            ):
                 # change_lr(no)
                 x = torch.cat([image, cur_masks], dim=1)
                 x = x.to(opt.device)
                 target_mask = target_mask.to(opt.device)
 
-                y = self.model(x)
-                loss = F.binary_cross_entropy(torch.sigmoid(y), target_mask)
+                y_mask, y_logits = self.model(x)
+                loss_mask = F.binary_cross_entropy(torch.sigmoid(y_mask), target_mask)
+                loss_cat = criterion(y_logits, target_class)
+                loss = loss_mask + loss_cat
                 # loss = self.cirterion(y, target_mask)
 
                 # loss = (
@@ -89,11 +94,11 @@ class Trainer(object):
                         # denormalize(fake_img, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]).data[
                         #     :25
                         # ],
-                        y.data[:9],
+                        y_mask.data[:9],
                         os.path.join(
-                            self.opt.sample_path, "{:06d}_fake.png".format(batches_done)
+                            self.opt.sample_path, "{:06d}_mask.png".format(batches_done)
                         ),
-                        nrow=5,
+                        nrow=3,
                         # normalize=True,
                     )
                 batches_done += 1
@@ -104,6 +109,7 @@ if __name__ == "__main__":
     opt.cuda = torch.cuda.is_available()
     opt.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     opt.img_shape = (opt.im_channels, opt.imsize, opt.imsize)
+    opt.n_classes = len(CLASSES)
 
     os.makedirs(opt.model_save_path, exist_ok=True)
     os.makedirs(opt.sample_path, exist_ok=True)
