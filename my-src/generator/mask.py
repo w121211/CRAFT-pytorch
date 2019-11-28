@@ -26,7 +26,19 @@ for i in range(2 * extent):
 heatmap = (heatmap / np.max(heatmap) * 255).astype(np.uint8)
 
 
-def create_mask(imsize: tuple, bboxes: np.ndarray) -> Image:
+def create_mask(imsize: tuple, bbox: tuple) -> Image:
+    """
+    Args:
+        imsize: (w, h)
+        bboxes: (x0, y0, x1, y1)
+    """
+    mask = Image.new("L", imsize)
+    draw = ImageDraw.Draw(mask)
+    draw.rectangle(bbox, fill=255)
+    return mask
+
+
+def create_n_mask(imsize: tuple, bboxes: np.ndarray) -> Image:
     """
     Args:
         imsize: (w, h)

@@ -9,20 +9,23 @@ import cairo
 from PIL import Image, ImageDraw, ImageFont
 from faker import Faker
 
-CLASSES = ("None", "Rect", "Gradient", "Pattern", "Photo", "Line", "Blend")
+CLASSES = ("Null", "Rect", "Photo", "Line")
 
 
 # define types
 Param = Dict[str, Union[int, float, np.ndarray]]
 
 
-def denorm(key: str, scale: Union[int, float], dtype=np.int16) -> Callable:
+def denorm(key: str, scale: Union[int, float], dtype=np.uint8) -> Callable:
     def fn(param, imsize):
-        if param[key] is None:
-            return None
         return tuple((param[key] * scale).astype(dtype))
 
     return fn
+
+
+def rgb(param, imsize):
+    rgb = (param["_rgb"] * 256).astype(np.uint8)
+    return tuple(rgb)
 
 
 def to_imsize(key):
@@ -33,13 +36,6 @@ def to_imsize(key):
     return fn
 
 
-# def clip(key, scope):
-def clip(param, imsize):
-
-    param["_wh"]
-    pass
-
-
 def bbox(param: dict, imsize: int) -> Tuple[int, int, int, int]:
     _xy = param["_cxy"] - param["_wh"] / 2
     wh = (param["_wh"] * imsize).astype(np.int16)
@@ -48,9 +44,10 @@ def bbox(param: dict, imsize: int) -> Tuple[int, int, int, int]:
 
 
 class Block(ABC):
-    def __init__(self, pspace=OrderedDict(), param={}):
-        super().__init__()
+    def __init__(self, pspace: OrderedDict, param={}):
+        super(Block, self).__init__()
         self._im = None
+        self._annotations = None
         self.label = None
         self.param = None
         pspace.update(param)
@@ -77,13 +74,13 @@ class Block(ABC):
         self.param["_wh"] = (xy1 - xy0) / imsize
         self.param["_cxy"] = ((xy1 + xy0) / 2) / imsize
 
-    def info(self, ann: Image.Image, bbox=None, cat=None, bk_infos=None):
+    def info(self, cmask="Null"):
+        # self._annotations = [(type(self).__name__, im)]
         return {
-            "ann": ann,
-            "cat": type(self).__name__ if cat is None else cat,
-            "bbox": self.param["bbox"] if bbox is None else bbox,
+            "cat": CLASSES.index(type(self).__name__),
+            "cmask": CLASSES.index(cmask),  # fill cmask
+            "bbox": self.param["bbox"],
             "param": self.param,
-            "bks": bk_infos,
         }
 
 
@@ -91,12 +88,12 @@ class Rect(Block):
     def __init__(self, param={}):
         pspace = OrderedDict(
             [
-                ("_wh", lambda *a: np.clip(np.random.normal(0.4, 0.2, 2), 0.03, 1)),
+                ("_wh", lambda *a: np.random.normal(0.4, 0.2, 2)),
                 ("_cxy", lambda *a: np.random.uniform(0, 1, 2)),
                 ("_rgb", lambda *a: np.random.uniform(0, 1, 3)),
                 ("_a", lambda *a: np.random.uniform(0, 1, 1)),
                 ("rgb", denorm("_rgb", 256)),
-                ("bbox", bbox),  # (x1, y1, x2, y2)
+                ("bbox", bbox),
             ]
         )
         super().__init__(pspace, param)
@@ -106,7 +103,7 @@ class Rect(Block):
         im = Image.new("RGBA", (imsize, imsize))
         draw = ImageDraw.Draw(im)
         draw.rectangle(self.param["bbox"], fill=self.param["rgb"], outline=None)
-        return im, self.info(im)
+        return im, self.info()
 
 
 class Ellipse(Rect):
@@ -115,101 +112,7 @@ class Ellipse(Rect):
         im = Image.new("RGBA", (imsize, imsize))
         draw = ImageDraw.Draw(im)
         draw.ellipse(self.param["bbox"], fill=self.param["rgb"], outline=None)
-        return im, self.info(im)
-
-
-class Gradient(Rect):
-    CLASSES = ("linear", "radial")
-
-    def __init__(self):
-        super().__init__()
-
-        def _wh(p, *a):
-            _wh = np.clip(np.random.normal(0.4, 0.2, 2), 0.05, 1)
-            _wh = np.clip(_wh, 0, 2 - 2 * p["_cxy"])
-            _wh = np.clip(_wh, 0, 2 * p["_cxy"])
-            return _wh
-
-        def _xy(*a):
-            if bool(random.getrandbits(1)):
-                return np.array([1.0, np.random.uniform(0, 1)])
-            else:
-                return np.array([np.random.uniform(0, 1), 1.0])
-
-        pspace = OrderedDict(
-            [
-                ("_cxy", lambda *a: np.random.uniform(0.05, 0.95, 2)),
-                ("_wh", _wh),
-                # ("i_cat", lambda *a: np.random.randint(0, len(self.CLASSES), 1)[0]),
-                # ("_stops", lambda *a: np.random.randint(2, 3, 1)[0]),  # ()
-                ("_stop_xy2", _xy),
-                (
-                    "_stop_rgba",
-                    lambda *a: np.random.uniform(0, 1, (2, 4)),
-                ),  # (n_stops, rgba)
-            ]
-        )
-        tmp = pspace.copy()
-        tmp.update(self.pspace)
-        tmp.update(pspace)
-        self.pspace = tmp
-
-    def sample(self, imsize):
-        super().sample(imsize)
-        x1, y1, x2, y2 = self.param["bbox"]
-        w, h = x2 - x1, y2 - y1
-        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, w, h)
-        cr = cairo.Context(surface)
-        cr.scale(w, h)
-        pat = cairo.LinearGradient(0.0, 0.0, *self.param["_stop_xy2"])
-        pat.add_color_stop_rgba(0.0, *self.param["_stop_rgba"][0])
-        pat.add_color_stop_rgba(1.0, *self.param["_stop_rgba"][1])
-        # pat.add_color_stop_rgba(0, 1, 1, 1, 1)
-        # pat.add_color_stop_rgba(1, 0, 0, 0, 1)
-        cr.rectangle(0, 0, 1, 1)
-        cr.set_source(pat)
-        cr.fill()
-        data = np.ndarray(shape=(h, w, 4), dtype=np.uint8, buffer=surface.get_data())
-        p = Image.fromarray(data)
-
-        im = Image.new("RGBA", (imsize, imsize))
-        im.paste(p, (x1, y1))
-        return im, self.info(im)
-
-
-class Pattern(Rect):
-    CLASSES = ("tile",)
-
-    def __init__(self, root, param={}):
-        super().__init__(param)
-        self.samples = glob.glob(root + "/*.jpg") + glob.glob(root + "/*.png")
-        pspace = OrderedDict(
-            [
-                ("_rgb", lambda *a: np.array([0.0, 0.0, 0.0])),
-                ("_a", lambda *a: np.array([0.0])),
-                ("i_sample", lambda *a: np.random.randint(0, len(self.samples), 1)[0]),
-                ("i_cat", lambda *a: np.random.randint(0, len(self.CLASSES), 1)[0]),
-            ]
-        )
-        self.pspace.update(pspace)
-
-    def sample(self, imsize):
-        super().sample(imsize)
-
-        x1, y1, x2, y2 = self.param["bbox"]
-        w, h = x2 - x1, y2 - y1
-
-        _im = Image.new("RGBA", (w, h))
-        p = Image.open(self.samples[self.param["i_sample"]])
-        p = p.convert("RGBA")
-        if self.CLASSES[self.param["i_cat"]] == "tile":
-            for i in range(0, w, p.size[0]):
-                for j in range(0, h, p.size[1]):
-                    _im.paste(p, (i, j))
-
-        im = Image.new("RGBA", (imsize, imsize))
-        im.paste(_im, (x1, y1))
-        return im, self.info(im)
+        return im, self.info()
 
 
 class Photo(Block):
@@ -218,9 +121,14 @@ class Photo(Block):
         self.samples = glob.glob(root + "/*.jpg") + glob.glob(root + "/*.png")
         pspace = OrderedDict(
             [
+                ("_rgb", lambda *a: np.array([0., 0., 0.])),
+                ("_a", lambda *a: np.array([0.])),
                 ("_wh", lambda *a: np.random.normal(0.8, 0.2, 2)),
                 ("_cxy", lambda *a: np.random.uniform(0, 1, 2)),
-                ("i_photo", lambda *a: np.random.randint(0, len(self.samples), 1)[0]),
+                (
+                    "i_photo",
+                    lambda *a: np.random.randint(0, len(self.samples), 1)[0],
+                ),
                 ("wh", to_imsize("_wh")),
                 ("cxy", to_imsize("_cxy")),
                 ("bbox", bbox),
@@ -245,7 +153,8 @@ class Photo(Block):
             im.paste(p, (int(cx - p.width / 2), int(cy - p.height / 2)))
 
         self.update_param(im.getbbox(), imsize)
-        return im, self.info(im)
+        return im, self.info()
+
 
 
 class Line(Block):
@@ -257,31 +166,27 @@ class Line(Block):
             fonts.append(f)
         except:
             pass
-
-    def __init__(self, param={}):
+    
+    def __init__(self):
         pspace = OrderedDict(
             [
                 ("i_font", lambda *a: np.random.randint(0, len(self.fonts), 1)[0]),
-                (
-                    "textsize",
-                    lambda *a: int(np.clip(np.random.normal(14, 5, 1), 5, None)[0]),
-                ),
+                ("textsize", lambda *a: int(np.clip(np.random.normal(5, 3, 1), 1, None)[0])),
                 ("_rgb", lambda *a: np.random.uniform(0, 1, 3)),
-                ("_a", lambda *a: np.array([1.0])),
+                ("_a", lambda *a: np.array([1.])),
                 ("_cxy", lambda *a: np.random.uniform(0, 1, 2)),
-                ("rgb", denorm("_rgb", 256)),
+                ("rgb", rgb),
                 ("cxy", to_imsize("_cxy")),
                 # ("a"),
                 # ("stroke_w"),
                 # ("stoke_rgb"),
             ]
         )
-        super().__init__(pspace, param)
+        super().__init__(pspace)
 
     def sample(self, imsize):
         super().sample(imsize)
-
-        text = self.fake.sentence(nb_words=5, variable_nb_words=True)
+        text = self.fake.sentence(nb_words=3, variable_nb_words=True)
         font = ImageFont.truetype(
             self.fonts[self.param["i_font"]], self.param["textsize"]
         )
@@ -293,7 +198,7 @@ class Line(Block):
         draw.text((cx - w / 2, cy - h / 2), text, font=font, fill=self.param["rgb"])
 
         self.update_param(im.getbbox(), imsize)
-        return im, self.info(im)
+        return im, self.info()
 
 
 class Group(Block):
@@ -315,27 +220,20 @@ class Group(Block):
 
 
 class CropMask(Block):
-    def __init__(self, mask: Block, fill: Rect):
-        self.mask = mask
-        self.fill = fill
+    def __init__(self, cmask: Block, base: Rect):
+        self.cmask = cmask
+        self.base = base
 
     def sample(self, imsize):
-        m_im, m_info = self.mask.sample(imsize)
-        p = self.mask.param
-        self.fill.pspace.update({"_wh": p["_wh"], "_cxy": p["_cxy"]})
-        f_im, f_info = self.fill.sample(imsize)
+        cim, _ = self.cmask.sample(imsize)
+        p = self.cmask.param
+        self.base.pspace.update({"_wh": p["_wh"], "_cxy": p["_cxy"]})
+        bim, binfo = self.base.sample(imsize)
 
-        im = Image.composite(f_im, Image.new("RGBA", (imsize, imsize)), m_im)
-        f_info.update({"cmask": m_info["cat"]})
+        im = Image.composite(bim, Image.new("RGBA", (imsize, imsize)), cim)
+        binfo.update({"cmask": binfo["cat"]})
 
-        # return im, f_info
-        return (
-            im,
-            self.info(
-                m_im,
-                cat="{}&{}".format(type(self.mask).__name__, type(self.fill).__name__),
-            ),
-        )
+        return im, binfo
 
 
 class Choice(Block):
@@ -345,6 +243,37 @@ class Choice(Block):
     def sample(self, imsize):
         return random.choice(self.choices).sample(imsize)
 
+
+class GradientFill(Rect):
+    CLASSES = ("linear", "radial")
+
+    def __init__(self):
+        super().__init__()
+        psapce = OrderedDict(
+            [
+                ("i_grad", lambda *a: np.random.randint(0, len(self.CLASSES), 1)[0]),
+                ("n_points", lambda *a: np.random.uniform(0, 1, 3)),
+                ("_nd_rgb", lambda *a: np.random.uniform(0, 1, 3)),
+            ]
+        )
+        self.pspace.update(psapce)
+
+    def sample(self, imsize):
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 200, 200)
+        cr = cairo.Context(surface)
+        cr.scale(200, 200)
+        pat = cairo.LinearGradient(0.0, 0.0, 0.0, 1.0)
+        pat.add_color_stop_rgba(1, 0, 0, 0, 1)
+        pat.add_color_stop_rgba(0, 1, 1, 1, 1)
+        cr.rectangle(0, 0, 1, 1)
+        cr.set_source(pat)
+        cr.fill()
+
+        data = np.ndarray(
+            shape=(200, 200, 4), dtype=np.uint8, buffer=surface.get_data()
+        )
+        im = Image.fromarray(data)
+        return im, self.info()
 
 class Filter(Rect):
     def __init__(self, mask):
@@ -367,28 +296,9 @@ class Filter(Rect):
         bk = self.choices[self.param["i_bk"]]
         bk.sample(imsize)
         self._im = bk.im
+        self._annotations = bk.annotations
         self.label = bk.label
-
-
-class Blend(Block):
-    def __init__(self, blocks: List[Block]):
-        super().__init__()
-        self.blocks = blocks
-
-    def sample(self, imsize):
-        base = self.blocks[0]
-        im, _info = base.sample(imsize)
-
-        infos = [_info]
-        for b in self.blocks[1:]:
-            b.pspace.update({"_wh": base.param["_wh"], "_cxy": base.param["_cxy"]})
-            _im, _info = b.sample(imsize)
-            im.alpha_composite(_im)
-            infos.append(_info)
-
-        return im, self.info(im, bbox=base.param["bbox"], bk_infos=infos)
 
 
 class Icon:
     pass
-

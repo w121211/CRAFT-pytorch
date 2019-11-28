@@ -69,6 +69,7 @@ class Trainer(object):
                 x = torch.cat([image, cur_masks], dim=1)
                 x = x.to(opt.device)
                 target_mask = target_mask.to(opt.device)
+                target_class = target_class.to(opt.device)
 
                 y_mask, y_logits = self.model(x)
                 loss_mask = F.binary_cross_entropy(torch.sigmoid(y_mask), target_mask)
@@ -87,8 +88,8 @@ class Trainer(object):
 
                 if batches_done % opt.sample_interval == 0:
                     print(
-                        "[Epoch %d/%d] [Batch %d/%d] [loss: %f]"
-                        % (epoch, opt.n_epochs, i, len(dataloader), loss.item())
+                        "[Epoch %d/%d] [Batch %d/%d] [loss_cat: %f] [loss_mask: %f]"
+                        % (epoch, opt.n_epochs, i, len(dataloader), loss_cat.item(), loss_mask.item())
                     )
                     save_image(
                         # denormalize(fake_img, [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]).data[
@@ -100,6 +101,13 @@ class Trainer(object):
                         ),
                         nrow=3,
                         # normalize=True,
+                    )
+                    save_image(
+                        target_mask.data[:9],
+                        os.path.join(
+                            self.opt.sample_path, "{:06d}_mask_real.png".format(batches_done)
+                        ),
+                        nrow=3,
                     )
                 batches_done += 1
 
