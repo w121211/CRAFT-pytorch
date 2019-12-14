@@ -12,3 +12,6 @@ __pycache__
 tmp
 my-dataset
 out
+example.svg
+test.png
+crawl_noun.db

@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image
 from pycococreatortools import pycococreatortools
 
+from main import CATEGORIES
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--folder", type=str, default="train")
@@ -34,16 +35,6 @@ LICENSES = [
         "name": "Attribution-NonCommercial-ShareAlike License",
         "url": "http://creativecommons.org/licenses/by-nc-sa/2.0/",
     }
-]
-
-
-CATEGORIES = [
-    {"id": 0, "name": "Null", "supercategory": "Block"},
-    {"id": 1, "name": "Rect", "supercategory": "Block"},
-    {"id": 2, "name": "Photo", "supercategory": "Block"},
-    {"id": 3, "name": "Line", "supercategory": "Block"},
-    {"id": 4, "name": "Gradient", "supercategory": "Block"},
-    {"id": 5, "name": "Pattern", "supercategory": "Block"},
 ]
 
 
@@ -133,9 +124,10 @@ def main():
 
                 # go through each associated annotation
                 for annotation_filename in annotation_files:
+                    # TODO: 非常天真的bug fix，限定於cat是按照複雜度排列，仍有可能出錯
                     class_id = [
                         x["id"] for x in CATEGORIES if x["name"] in annotation_filename
-                    ][0]
+                    ][-1]
 
                     category_info = {
                         "id": class_id,

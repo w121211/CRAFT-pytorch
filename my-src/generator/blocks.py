@@ -1,5 +1,6 @@
 import glob
 import random
+import copy
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from typing import List, Tuple, Union, Callable, Dict
@@ -7,13 +8,79 @@ from typing import List, Tuple, Union, Callable, Dict
 import numpy as np
 import cairo
 from PIL import Image, ImageDraw, ImageFont
+import imageio
+import imgaug as ia
+import imgaug.augmenters as iaa
 from faker import Faker
-
-CLASSES = ("None", "Rect", "Gradient", "Pattern", "Photo", "Line", "Blend")
 
 
 # define types
 Param = Dict[str, Union[int, float, np.ndarray]]
+
+photo_seq = iaa.Sequential(
+    [
+        # apply the following augmenters to most images
+        iaa.Fliplr(0.5),  # horizontally flip 50% of all images
+        # iaa.Flipud(0.2),  # vertically flip 20% of all images
+        # crop images by -5% to 10% of their height/width
+        # iaa.Sometimes(
+        #     iaa.CropAndPad(percent=(-0.05, 0.1), pad_mode=ia.ALL, pad_cval=(0, 255))
+        # ),
+        iaa.Sometimes(0.5, iaa.PerspectiveTransform(scale=(0.01, 0.1))),
+        iaa.SomeOf(
+            (1, 3),
+            [
+                iaa.SimplexNoiseAlpha(
+                    iaa.OneOf(
+                        [
+                            iaa.EdgeDetect(alpha=(0.5, 1.0)),
+                            iaa.DirectedEdgeDetect(
+                                alpha=(0.5, 1.0), direction=(0.0, 1.0)
+                            ),
+                        ]
+                    )
+                ),
+                iaa.AdditiveGaussianNoise(
+                    loc=0, scale=(0.0, 0.05 * 255), per_channel=0.5
+                ),  # add gaussian noise to images
+                iaa.Invert(0.05, per_channel=True),  # invert color channels
+                iaa.Add(
+                    (-10, 10), per_channel=0.5
+                ),  # change brightness of images (by -10 to 10 of original value)
+                iaa.AddToHueAndSaturation((-20, 20)),  # change hue and saturation
+                # either change the brightness of the whole image (sometimes
+                # per channel) or change the brightness of subareas
+                iaa.OneOf(
+                    [
+                        iaa.Multiply((0.5, 1.5), per_channel=0.5),
+                        iaa.FrequencyNoiseAlpha(
+                            exponent=(-4, 0),
+                            first=iaa.Multiply((0.5, 1.5), per_channel=True),
+                            second=iaa.LinearContrast((0.5, 2.0)),
+                        ),
+                    ]
+                ),
+                iaa.LinearContrast((0.5, 2.0), per_channel=0.5),
+                iaa.Grayscale(alpha=(0.0, 1.0)),
+                iaa.Sometimes(0.5, iaa.PiecewiseAffine(scale=(0.01, 0.05))),
+            ],
+        ),
+    ],
+    random_order=True,
+)
+
+icon_seq = iaa.Sequential(
+    [
+        iaa.Fliplr(0.5),  # horizontally flip 50% of all images
+        iaa.Flipud(0.1),  # vertically flip 20% of all images
+        iaa.Sometimes(0.5, iaa.PerspectiveTransform(scale=(0.01, 0.1))),
+        iaa.Sometimes(
+            0.5, iaa.Affine(rotate=(-45, 45))  # rotate by -45 to +45 degrees
+        ),
+        iaa.Sometimes(0.5, iaa.PiecewiseAffine(scale=(0.01, 0.05))),
+    ],
+    random_order=True,
+)
 
 
 def denorm(key: str, scale: Union[int, float], dtype=np.int16) -> Callable:
@@ -35,7 +102,6 @@ def to_imsize(key):
 
 # def clip(key, scope):
 def clip(param, imsize):
-
     param["_wh"]
     pass
 
@@ -48,13 +114,14 @@ def bbox(param: dict, imsize: int) -> Tuple[int, int, int, int]:
 
 
 class Block(ABC):
-    def __init__(self, pspace=OrderedDict(), param={}):
+    def __init__(self, pspace=OrderedDict(), param={}, cat=None):
         super().__init__()
         self._im = None
         self.label = None
         self.param = None
         pspace.update(param)
         self.pspace = pspace
+        self.cat = cat or type(self).__name__
 
     @abstractmethod
     def sample(self, imsize):
@@ -80,7 +147,7 @@ class Block(ABC):
     def info(self, ann: Image.Image, bbox=None, cat=None, bk_infos=None):
         return {
             "ann": ann,
-            "cat": type(self).__name__ if cat is None else cat,
+            "cat": cat or self.cat,
             "bbox": self.param["bbox"] if bbox is None else bbox,
             "param": self.param,
             "bks": bk_infos,
@@ -94,8 +161,9 @@ class Rect(Block):
                 ("_wh", lambda *a: np.clip(np.random.normal(0.4, 0.2, 2), 0.03, 1)),
                 ("_cxy", lambda *a: np.random.uniform(0, 1, 2)),
                 ("_rgb", lambda *a: np.random.uniform(0, 1, 3)),
-                ("_a", lambda *a: np.random.uniform(0, 1, 1)),
+                ("_a", lambda *a: np.random.uniform(0.3, 1, 1)),
                 ("rgb", denorm("_rgb", 256)),
+                ("a", denorm("_a", 256)),
                 ("bbox", bbox),  # (x1, y1, x2, y2)
             ]
         )
@@ -103,9 +171,11 @@ class Rect(Block):
 
     def sample(self, imsize):
         super().sample(imsize)
+        rgba = self.param["rgb"] + self.param["a"]
+
         im = Image.new("RGBA", (imsize, imsize))
         draw = ImageDraw.Draw(im)
-        draw.rectangle(self.param["bbox"], fill=self.param["rgb"], outline=None)
+        draw.rectangle(self.param["bbox"], fill=rgba, outline=None)
         return im, self.info(im)
 
 
@@ -118,11 +188,11 @@ class Ellipse(Rect):
         return im, self.info(im)
 
 
-class Gradient(Rect):
+class Grad(Rect):
     CLASSES = ("linear", "radial")
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, param={}):
+        super().__init__(param)
 
         def _wh(p, *a):
             _wh = np.clip(np.random.normal(0.4, 0.2, 2), 0.05, 1)
@@ -149,9 +219,10 @@ class Gradient(Rect):
                 ),  # (n_stops, rgba)
             ]
         )
-        tmp = pspace.copy()
+        tmp = pspace.copy()  # 為了更新OrderedDict的順序
         tmp.update(self.pspace)
         tmp.update(pspace)
+        tmp.update(param)  # 外部的param直接寫入
         self.pspace = tmp
 
     def sample(self, imsize):
@@ -178,71 +249,97 @@ class Gradient(Rect):
 
 
 class Pattern(Rect):
-    CLASSES = ("tile",)
-
     def __init__(self, root, param={}):
         super().__init__(param)
         self.samples = glob.glob(root + "/*.jpg") + glob.glob(root + "/*.png")
         pspace = OrderedDict(
             [
-                ("_rgb", lambda *a: np.array([0.0, 0.0, 0.0])),
-                ("_a", lambda *a: np.array([0.0])),
                 ("i_sample", lambda *a: np.random.randint(0, len(self.samples), 1)[0]),
-                ("i_cat", lambda *a: np.random.randint(0, len(self.CLASSES), 1)[0]),
+                # ("i_cat", lambda *a: np.random.randint(0, len(self.CLASSES), 1)[0]),
+            ]
+        )
+        self.pspace.update(pspace)
+
+    def sample(self, imsize):
+        rect, _ = super().sample(imsize)
+
+        fill = Image.new("RGBA", (imsize, imsize))
+        p = Image.open(self.samples[self.param["i_sample"]]).convert("RGBA")
+        for i in range(0, imsize, p.size[0]):
+            for j in range(0, imsize, p.size[1]):
+                fill.paste(p, (i, j))
+
+        blend = Image.alpha_composite(rect, fill)
+        im = Image.new("RGBA", (imsize, imsize))
+        im.paste(blend, mask=rect)
+        # im.paste(blend, mask=rect.split()[-1])
+
+        return im, self.info(im)
+
+
+class Icon(Rect):
+    PATTERN = ("tile", "rand")
+
+    def __init__(self, root, param={}):
+        super().__init__(param)
+        self.samples = glob.glob(root + "/*.png")
+        pspace = OrderedDict(
+            [
+                ("_wh", lambda *a: np.clip(np.random.normal(0.2, 0.1, 2), 0.05, 0.7)),
+                ("i_sample", lambda *a: np.random.randint(0, len(self.samples))),
+                ("transpose", None),  # (skew, rotate), stretch is defined by wh
             ]
         )
         self.pspace.update(pspace)
 
     def sample(self, imsize):
         super().sample(imsize)
-
         x1, y1, x2, y2 = self.param["bbox"]
         w, h = x2 - x1, y2 - y1
+        rgba = self.param["rgb"] + self.param["a"]
 
-        _im = Image.new("RGBA", (w, h))
-        p = Image.open(self.samples[self.param["i_sample"]])
-        p = p.convert("RGBA")
-        if self.CLASSES[self.param["i_cat"]] == "tile":
-            for i in range(0, w, p.size[0]):
-                for j in range(0, h, p.size[1]):
-                    _im.paste(p, (i, j))
+        p = imageio.imread(self.samples[self.param["i_sample"]])
+        p = icon_seq.augment_image(p)
+        p = Image.fromarray(p[:, :, 3])  # alpha layer only
+        p.thumbnail((w, h))
 
-        im = Image.new("RGBA", (imsize, imsize))
-        im.paste(_im, (x1, y1))
+        crop = Image.new("L", (imsize, imsize))
+        crop.paste(p, (x1, y1))
+        fill = Image.new("RGBA", (imsize, imsize))
+        draw = ImageDraw.Draw(fill)
+        draw.rectangle((0, 0, imsize, imsize), fill=rgba, outline=None)
+        im = Image.composite(fill, Image.new("RGBA", (imsize, imsize)), mask=crop)
+
         return im, self.info(im)
 
 
 class Photo(Block):
-    def __init__(self, root, param={}):
-        # super().__init__(param)
+    def __init__(self, root, param={}, cat=None, aug=True):
         self.samples = glob.glob(root + "/*.jpg") + glob.glob(root + "/*.png")
         pspace = OrderedDict(
             [
                 ("_wh", lambda *a: np.random.normal(0.8, 0.2, 2)),
                 ("_cxy", lambda *a: np.random.uniform(0, 1, 2)),
-                ("i_photo", lambda *a: np.random.randint(0, len(self.samples), 1)[0]),
+                ("i_sample", lambda *a: np.random.randint(0, len(self.samples), 1)[0]),
                 ("wh", to_imsize("_wh")),
                 ("cxy", to_imsize("_cxy")),
                 ("bbox", bbox),
                 ("repeat", lambda *a: False),
             ]
         )
-        super().__init__(pspace, param)
+        super().__init__(pspace, param, cat)
 
     def sample(self, imsize):
         super().sample(imsize)
         cx, cy = self.param["cxy"]
-        im = Image.new("RGBA", (imsize, imsize))
-        p = Image.open(self.samples[self.param["i_photo"]])
 
-        if self.param["repeat"]:
-            for i in range(0, self.param["wh"][0], p.size[0]):
-                for j in range(0, self.param["wh"][1], p.size[1]):
-                    im.paste(p, (i, j))
-                    # print(i, j)
-        else:
-            p.thumbnail(self.param["wh"])
-            im.paste(p, (int(cx - p.width / 2), int(cy - p.height / 2)))
+        p = imageio.imread(self.samples[self.param["i_sample"]])
+        p = photo_seq.augment_image(p)
+        p = Image.fromarray(p).convert("RGBA")
+        p.thumbnail(self.param["wh"])
+
+        im = Image.new("RGBA", (imsize, imsize))
+        im.paste(p, (int(cx - p.width / 2), int(cy - p.height / 2)))
 
         self.update_param(im.getbbox(), imsize)
         return im, self.info(im)
@@ -261,11 +358,8 @@ class Line(Block):
     def __init__(self, param={}):
         pspace = OrderedDict(
             [
-                ("i_font", lambda *a: np.random.randint(0, len(self.fonts), 1)[0]),
-                (
-                    "textsize",
-                    lambda *a: int(np.clip(np.random.normal(14, 5, 1), 5, None)[0]),
-                ),
+                ("i_font", lambda *a: np.random.randint(0, len(self.fonts))),
+                ("textsize", lambda *a: int(np.clip(np.random.normal(14, 5), 5, None))),
                 ("_rgb", lambda *a: np.random.uniform(0, 1, 3)),
                 ("_a", lambda *a: np.array([1.0])),
                 ("_cxy", lambda *a: np.random.uniform(0, 1, 2)),
@@ -314,32 +408,9 @@ class Group(Block):
         # return zip(*[bk.sample(imsize) for bk in self.blocks])
 
 
-class CropMask(Block):
-    def __init__(self, mask: Block, fill: Rect):
-        self.mask = mask
-        self.fill = fill
-
-    def sample(self, imsize):
-        m_im, m_info = self.mask.sample(imsize)
-        p = self.mask.param
-        self.fill.pspace.update({"_wh": p["_wh"], "_cxy": p["_cxy"]})
-        f_im, f_info = self.fill.sample(imsize)
-
-        im = Image.composite(f_im, Image.new("RGBA", (imsize, imsize)), m_im)
-        f_info.update({"cmask": m_info["cat"]})
-
-        # return im, f_info
-        return (
-            im,
-            self.info(
-                m_im,
-                cat="{}&{}".format(type(self.mask).__name__, type(self.fill).__name__),
-            ),
-        )
-
-
 class Choice(Block):
-    def __init__(self, choices=[]):
+    def __init__(self, choices: List[Block] = []):
+        assert len(choices) >= 1
         self.choices = choices
 
     def sample(self, imsize):
@@ -370,25 +441,97 @@ class Filter(Rect):
         self.label = bk.label
 
 
-class Blend(Block):
-    def __init__(self, blocks: List[Block]):
-        super().__init__()
-        self.blocks = blocks
+class CropMask(Block):
+    def __init__(self, mask: Block, fill: Rect):
+        self.mask = mask
+        self.fill = fill
 
     def sample(self, imsize):
-        base = self.blocks[0]
-        im, _info = base.sample(imsize)
+        m_im, m_info = self.mask.sample(imsize)
+        p = self.mask.param
+        self.fill.pspace.update({"_wh": p["_wh"], "_cxy": p["_cxy"]})
+        f_im, f_info = self.fill.sample(imsize)
 
-        infos = [_info]
+        im = Image.composite(f_im, Image.new("RGBA", (imsize, imsize)), m_im)
+        f_info.update({"cmask": m_info["cat"]})
+
+        # return im, f_info
+        return (
+            im,
+            self.info(
+                m_im,
+                cat="{}&{}".format(type(self.mask).__name__, type(self.fill).__name__),
+            ),
+        )
+
+
+class Blend(Block):
+    def __init__(self, blocks: List[Block], cat: str, crop=False):
+        super().__init__(cat=cat)
+        assert len(blocks) >= 2
+        self.blocks = blocks
+        self.crop = crop
+
+    def sample(self, imsize):
+        crop = self.blocks[0]
+        c_im, c_info = crop.sample(imsize)
+
+        infos = [c_info]
+        f_im = Image.new("RGBA", (imsize, imsize))
         for b in self.blocks[1:]:
-            b.pspace.update({"_wh": base.param["_wh"], "_cxy": base.param["_cxy"]})
+            b.pspace.update({"_wh": crop.param["_wh"], "_cxy": crop.param["_cxy"]})
             _im, _info = b.sample(imsize)
-            im.alpha_composite(_im)
+            f_im.alpha_composite(_im)
             infos.append(_info)
 
-        return im, self.info(im, bbox=base.param["bbox"], bk_infos=infos)
+        im = Image.composite(f_im, Image.new("RGBA", (imsize, imsize)), c_im)
+        return im, self.info(im, bbox=crop.param["bbox"], bk_infos=infos)
 
 
-class Icon:
+class Copies(Block):
+    def __init__(self, bk: Block, min: int, max: int, lock_params=tuple()):
+        pspace = OrderedDict([("n_copies", lambda *a: np.random.randint(min, max))])
+        super().__init__(pspace)
+        self.bk = bk
+        self.lock_params = lock_params
+
+    def sample(self, imsize):
+        super().sample(imsize)
+        im, _ = self.bk.sample(imsize)
+        ims, infos = [], []
+        for _ in range(self.param["n_copies"]):
+            cp = copy.deepcopy(self.bk)  # use copy avoid pollute
+            for p in self.lock_params:
+                cp.pspace.update({p: self.bk.param[p]})
+            im, info = cp.sample(imsize)
+            ims.append(im)
+            infos.append(info)
+
+        return ims, infos
+
+
+class Text(Block):
     pass
+
+
+class TextBox(Block):
+    def __init__(self, bk: List[Block], param={}):
+        pspace = OrderedDict([("n_copies", lambda *a: np.random.randint(min, max))])
+        super().__init__(pspace)
+        self.bk = bk
+        self.lock_params = lock_params
+
+    def sample(self, imsize):
+        super().sample(imsize)
+        im, _ = self.bk.sample(imsize)
+        ims, infos = [], []
+        for _ in range(self.param["n_copies"]):
+            cp = copy.deepcopy(self.bk)  # use copy avoid pollute
+            for p in self.lock_params:
+                cp.pspace.update({p: self.bk.param[p]})
+            im, info = cp.sample(imsize)
+            ims.append(im)
+            infos.append(info)
+
+        return ims, infos
 
