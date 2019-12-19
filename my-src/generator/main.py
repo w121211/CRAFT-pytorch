@@ -36,10 +36,8 @@ CATEGORIES = [
     {"id": 6, "name": "Blend", "supercategory": "Block"},
     {"id": 7, "name": "Blend_Rect", "supercategory": "Block"},
     {"id": 8, "name": "Blend_Icon", "supercategory": "Block"},
-    # {"id": 9, "name": "Crop", "supercategory": "Block"},
     {"id": 9, "name": "Photo_Rect", "supercategory": "Block"},
     {"id": 10, "name": "Photo_Trans", "supercategory": "Block"},
-    
 ]
 
 PARAMS_TO_PREDICT = (
@@ -115,10 +113,9 @@ if __name__ == "__main__":
         [
             bk.Rect(p),
             bk.Grad(p),
-            bk.Photo("/workspace/CoordConv/data/flickr", p, cat="Photo_Rect"),
-            bk.Pattern("/workspace/CRAFT-pytorch/data/patterns", p),
+            bk.Photo("/workspace/CoordConv/data/flickr/*.jpg", p, cat="Photo_Rect"),
             # bk.Photo("/workspace/CoordConv-pytorch/data/facebook", p, cat="Photo_Rect"),
-            # bk.Pattern("/workspace/transparent-textures/patterns", p),
+            bk.Pattern("/workspace/CRAFT-pytorch/data/patterns", p),
         ]
     )
 
@@ -127,7 +124,7 @@ if __name__ == "__main__":
     pat = bk.Pattern("/workspace/CRAFT-pytorch/data/patterns", p)
 
     # pat_grad= bk.Blend([pat, bk.Gradient()], "Blend_Icon", crop=False)
-    bw_grad = bk.Gradient({"_stop_rgba": np.array([[0, 0, 0, 0], [1, 1, 1, 1]])})
+    bw_grad = bk.Grad({"_stop_rgba": np.array([[0, 0, 0, 0], [1, 1, 1, 1]])})
     bw = bk.Blend([rect, bw_grad], "Blend_Rect")
 
     line = bk.Line()
@@ -135,8 +132,8 @@ if __name__ == "__main__":
 
     photo = bk.Choice(
         [
-            bk.Photo("/workspace/CoordConv/data/flickr", p, cat="Photo_Rect"),
-            # bk.Photo("/workspace/CoordConv-pytorch/data/facebook", cat="Photo_Rect"),
+            # bk.Photo("/workspace/CoordConv/data/flickr", p, cat="Photo_Rect"),
+            bk.Photo("/workspace/CoordConv/data/freepng/freepngs/freepngs - complete collection/People/**/*.png", cat="Photo_Trans"),
             # bk.Photo("..../transparent", cat="Photo_Trans"),
         ]
     )
@@ -145,18 +142,24 @@ if __name__ == "__main__":
     icon = bk.Choice(
         [
             _icon,
-            bk.Blend([_icon, bk.Gradient()], "Blend_Icon", crop=True),
+            bk.Blend([_icon, bk.Grad()], "Blend_Icon", crop=True),
             bk.Blend([_icon, bk.Rect()], "Blend_Icon", crop=True),
             bk.Blend([_icon, copy.deepcopy(pat)], "Blend_Icon", crop=True),
         ]
     )
     icons = bk.Copies(icon, 1, 5)
 
+    pg = bk.PhotoGroup(
+        # bk.Photo("/workspace/CoordConv-pytorch/data/facebook", cat="Photo_Rect")
+        bk.Photo("/workspace/CoordConv/data/flickr/*.jpg", cat="Photo_Rect")
+    )
+
     samplers = [
         # Sampler([bw], opt)
         Sampler([bg, icons, lines], opt),
         Sampler([bg, lines, icons], opt),
-        Sampler([bg, photo, icons, lines], opt),
+        Sampler([bg, pg, icons, lines], opt),
+        Sampler([bg, pg, lines, icon], opt),
         Sampler([bg, photo, lines, icon], opt),
         # Sampler([bg, rect, icon, text], opt),
         # Sampler([bg, rect, text, icon], opt),

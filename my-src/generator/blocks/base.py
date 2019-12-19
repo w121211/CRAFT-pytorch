@@ -13,7 +13,6 @@ import imgaug as ia
 import imgaug.augmenters as iaa
 from faker import Faker
 
-
 # define types
 Param = Dict[str, Union[int, float, np.ndarray]]
 
@@ -83,7 +82,7 @@ icon_seq = iaa.Sequential(
 )
 
 
-def denorm(key: str, scale: Union[int, float], dtype=np.int16) -> Callable:
+def denorm(key: str, scale: Union[int, float], dtype=np.int32) -> Callable:
     def fn(param, imsize):
         if param[key] is None:
             return None
@@ -94,7 +93,7 @@ def denorm(key: str, scale: Union[int, float], dtype=np.int16) -> Callable:
 
 def to_imsize(key):
     def fn(param, imsize):
-        p = (param[key] * imsize).astype(np.int16)
+        p = (param[key] * imsize).astype(np.int32)
         return tuple(p)
 
     return fn
@@ -108,8 +107,8 @@ def clip(param, imsize):
 
 def bbox(param: dict, imsize: int) -> Tuple[int, int, int, int]:
     _xy = param["_cxy"] - param["_wh"] / 2
-    wh = (param["_wh"] * imsize).astype(np.int16)
-    xy = (_xy * imsize).astype(np.int16)
+    wh = (param["_wh"] * imsize).astype(np.int32)
+    xy = (_xy * imsize).astype(np.int32)
     return tuple(np.concatenate((xy, xy + wh)))
 
 
@@ -125,7 +124,6 @@ class Block(ABC):
 
     @abstractmethod
     def sample(self, imsize):
-        self.param = None
         p = dict()
         for k, v in self.pspace.items():
             if callable(v):
@@ -138,7 +136,7 @@ class Block(ABC):
         """Given bbox, update param's `wh`, `cxy`. Used for undetermined shape"""
         self.param["bbox"] = bbox
         if bbox is None:
-            raise Exception("")
+            raise Exception()
         xy0 = np.array(bbox[:2], dtype=np.float32)
         xy1 = np.array(bbox[2:], dtype=np.float32)
         self.param["_wh"] = (xy1 - xy0) / imsize
@@ -310,38 +308,6 @@ class Icon(Rect):
         draw.rectangle((0, 0, imsize, imsize), fill=rgba, outline=None)
         im = Image.composite(fill, Image.new("RGBA", (imsize, imsize)), mask=crop)
 
-        return im, self.info(im)
-
-
-class Photo(Block):
-    def __init__(self, root, param={}, cat=None, aug=True):
-        self.samples = glob.glob(root + "/*.jpg") + glob.glob(root + "/*.png")
-        pspace = OrderedDict(
-            [
-                ("_wh", lambda *a: np.random.normal(0.8, 0.2, 2)),
-                ("_cxy", lambda *a: np.random.uniform(0, 1, 2)),
-                ("i_sample", lambda *a: np.random.randint(0, len(self.samples), 1)[0]),
-                ("wh", to_imsize("_wh")),
-                ("cxy", to_imsize("_cxy")),
-                ("bbox", bbox),
-                ("repeat", lambda *a: False),
-            ]
-        )
-        super().__init__(pspace, param, cat)
-
-    def sample(self, imsize):
-        super().sample(imsize)
-        cx, cy = self.param["cxy"]
-
-        p = imageio.imread(self.samples[self.param["i_sample"]])
-        p = photo_seq.augment_image(p)
-        p = Image.fromarray(p).convert("RGBA")
-        p.thumbnail(self.param["wh"])
-
-        im = Image.new("RGBA", (imsize, imsize))
-        im.paste(p, (int(cx - p.width / 2), int(cy - p.height / 2)))
-
-        self.update_param(im.getbbox(), imsize)
         return im, self.info(im)
 
 
