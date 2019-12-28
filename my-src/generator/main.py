@@ -65,13 +65,25 @@ class Sampler:
         for bk in self.blocks:
             # _im, (cat, param, bks) = bk.sample()  # im as annotation
             _im, _info = bk.sample(self.imsize)
-            if isinstance(_im, list):
-                for a, b in zip(_im, _info):
+            try:
+                for a in _im:
                     im.alpha_composite(a)
-                    bks.append(b)
-            else:
+            except:
                 im.alpha_composite(_im)
+
+            if isinstance(_info, list):
+                bks += _info
+            else:
                 bks.append(_info)
+
+            # if isinstance(_im, list):
+            #     for a, b in zip(_im, _info):
+            #         im.alpha_composite(a)
+            #         bks.append(b)
+            # else:
+            #     im.alpha_composite(_im)
+            #     bks.append(_info)
+
         return im, bks
 
 
@@ -101,7 +113,8 @@ def get_parameters():
 if __name__ == "__main__":
     opt = get_parameters()
     os.makedirs(os.path.join(opt.save_to, opt.folder, "images"), exist_ok=True)
-    os.makedirs(os.path.join(opt.save_to, opt.folder, "annotations"), exist_ok=True)
+    os.makedirs(os.path.join(opt.save_to, opt.folder,
+                             "annotations"), exist_ok=True)
     os.makedirs(os.path.join(opt.save_to, opt.folder, "masks"), exist_ok=True)
 
     p = {
@@ -113,8 +126,10 @@ if __name__ == "__main__":
         [
             bk.Rect(p),
             bk.Grad(p),
-            bk.Photo("/workspace/CoordConv/data/flickr/*.jpg", p, cat="Photo_Rect"),
-            # bk.Photo("/workspace/CoordConv-pytorch/data/facebook", p, cat="Photo_Rect"),
+            # bk.Photo("/workspace/CoordConv/data/flickr/*.jpg", p, cat="Photo_Rect"),
+            bk.Photo(
+                "/workspace/CRAFT-pytorch/data/crawled_fb/model/*.jpg", p, cat="Photo_Rect"
+            ),
             bk.Pattern("/workspace/CRAFT-pytorch/data/patterns", p),
         ]
     )
@@ -127,13 +142,16 @@ if __name__ == "__main__":
     bw_grad = bk.Grad({"_stop_rgba": np.array([[0, 0, 0, 0], [1, 1, 1, 1]])})
     bw = bk.Blend([rect, bw_grad], "Blend_Rect")
 
-    line = bk.Line()
-    lines = bk.Copies(line, 3, 5)
+    # line = bk.Line()
+    # lines = bk.Copies(line, 3, 5)
 
     photo = bk.Choice(
         [
             # bk.Photo("/workspace/CoordConv/data/flickr", p, cat="Photo_Rect"),
-            bk.Photo("/workspace/CoordConv/data/freepng/freepngs/freepngs - complete collection/People/**/*.png", cat="Photo_Trans"),
+            bk.Photo(
+                "/workspace/CoordConv/data/freepng/freepngs/freepngs - complete collection/People/**/*.png",
+                cat="Photo_Trans",
+            ),
             # bk.Photo("..../transparent", cat="Photo_Trans"),
         ]
     )
@@ -149,18 +167,23 @@ if __name__ == "__main__":
     )
     icons = bk.Copies(icon, 1, 5)
 
-    pg = bk.PhotoGroup(
-        # bk.Photo("/workspace/CoordConv-pytorch/data/facebook", cat="Photo_Rect")
-        bk.Photo("/workspace/CoordConv/data/flickr/*.jpg", cat="Photo_Rect")
+    pg = bk.Choice(
+        [
+            bk.PhotoGroup(bk.Photo(
+                "/workspace/CRAFT-pytorch/data/crawled_fb/model/*.jpg", cat="Photo_Rect")),
+            # bk.PhotoGroup(bk.Photo("/workspace/CoordConv/data/flickr/*.jpg", cat="Photo_Rect"))
+        ]
     )
 
+    tb = bk.Textbox()
+
     samplers = [
-        # Sampler([bw], opt)
-        Sampler([bg, icons, lines], opt),
-        Sampler([bg, lines, icons], opt),
-        Sampler([bg, pg, icons, lines], opt),
-        Sampler([bg, pg, lines, icon], opt),
-        Sampler([bg, photo, lines, icon], opt),
+        Sampler([bg, tb], opt)
+        # Sampler([bg, icons, lines], opt),
+        # Sampler([bg, lines, icons], opt),
+        # Sampler([bg, pg, icons, lines], opt),
+        # Sampler([bg, pg, lines, icon], opt),
+        # Sampler([bg, photo, lines, icon], opt),
         # Sampler([bg, rect, icon, text], opt),
         # Sampler([bg, rect, text, icon], opt),
     ]
@@ -168,7 +191,7 @@ if __name__ == "__main__":
     meta = {
         "params_to_predict": PARAMS_TO_PREDICT,
         "param_cats_to_predict": PARAM_CATS_TO_PREDICT,
-        "ns_cats": (len(pat.samples) + 1, len(_icon.samples) + 1, len(line.fonts) + 1),
+        # "ns_cats": (len(pat.samples) + 1, len(_icon.samples) + 1, len(line.fonts) + 1),
     }
 
     i = 0
@@ -177,12 +200,13 @@ if __name__ == "__main__":
         if i % 100 == 0:
             print(i)
 
-        # im, bks = random.choice(samplers).sample()
-        try:
-            im, bks = random.choice(samplers).sample()
-        except:
-            continue
-        im_path = os.path.join(opt.save_to, opt.folder, "images", "{}.png".format(i))
+        im, bks = random.choice(samplers).sample()
+        # try:
+        #     im, bks = random.choice(samplers).sample()
+        # except:
+        #     continue
+        im_path = os.path.join(opt.save_to, opt.folder,
+                               "images", "{}.png".format(i))
         im.save(im_path)
 
         for j, bk in enumerate(bks):

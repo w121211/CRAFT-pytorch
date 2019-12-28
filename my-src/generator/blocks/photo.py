@@ -68,31 +68,33 @@ class Photo(Block):
     def __init__(self, root, param={}, cat=None, aug=True):
         # self.samples = glob.glob(root + "/*.jpg") + glob.glob(root + "/*.png")
         self.samples = glob.glob(root)
-        print(len(self.samples))
         pspace = OrderedDict(
             [
                 # ("_wh", lambda *a: np.random.normal(0.8, 0.2, 2)),
-                ("_wh", lambda *a: np.random.normal(0.6, 0.2, 2)),
+                ("_wh", lambda *a: np.clip(np.random.normal(0.6, 0.2, 2), 0.2, 1)),
+                # ("_wh", lambda *a: np.random.normal(0.6, 0.2, 2)),
                 ("_cxy", lambda *a: np.random.uniform(0, 1, 2)),
                 ("i_sample", lambda *a: np.random.randint(0, len(self.samples), 1)[0]),
                 ("wh", to_imsize("_wh")),
                 ("cxy", to_imsize("_cxy")),
                 ("bbox", bbox),
-                ("repeat", lambda *a: False),
+                # ("repeat", lambda *a: False),
+                ("_xy", lambda *a: np.random.uniform(0, 0.7, 2)),  # use for photo group
+                ("xy", to_imsize("_xy")),
             ]
         )
         super().__init__(pspace, param, cat)
 
+        self._photo = None
+
     def render(self, imsize):
-        cx, cy = self.param["cxy"]
-        p = imageio.imread(self.samples[self.param["i_sample"]])
-        p = photo_seq.augment_image(p)
-        p = Image.fromarray(p).convert("RGBA")
-        p.thumbnail(self.param["wh"])
-
+        # p = imageio.imread(self.samples[self.param["i_sample"]])
+        # p = photo_seq.augment_image(p)
+        # p = Image.fromarray(p).convert("RGBA")
+        # p.thumbnail(self.param["wh"])
+        p = self._photo.resize(self.param["wh"], Image.BICUBIC)
         im = Image.new("RGBA", (imsize, imsize))
-        im.paste(p, (int(cx - p.width / 2), int(cy - p.height / 2)))
-
+        im.paste(p, tuple(self.param["xy"]))
         self.update_param(im.getbbox(), imsize)
         return im, self.info(im)
 
@@ -100,9 +102,13 @@ class Photo(Block):
         super().sample(imsize)
         cx, cy = self.param["cxy"]
 
-        p = imageio.imread(self.samples[self.param["i_sample"]])
-        p = photo_seq.augment_image(p)
-        p = Image.fromarray(p).convert("RGBA")
+        # p = imageio.imread(self.samples[self.param["i_sample"]])
+        # p = photo_seq.augment_image(p)
+        # p = Image.fromarray(p).convert("RGBA")
+        p = Image.open(self.samples[self.param["i_sample"]]).convert("RGBA")
+
+        self._photo = copy.deepcopy(p)
+
         p.thumbnail(self.param["wh"])
 
         im = Image.new("RGBA", (imsize, imsize))
@@ -126,22 +132,22 @@ class PhotoGroup(Block):
 
     def _cat_hor(self, photos):
         min_h = min(p.param["wh"][1] for p in photos)
-        cx, cy = photos[0].param["cxy"]
+        x, y = photos[0].param["xy"]
         dx = 0
         for p in photos:
             w, h = p.param["wh"]
-            p.param["wh"] = (w * min_h / h, min_h)
-            p.param["cxy"] = (cx + dx, cy)
+            p.param["wh"] = np.array((w * min_h / h, min_h), dtype=np.int32)
+            p.param["xy"] = np.array((x + dx, y), dtype=np.int32)
             dx += p.param["wh"][0]
 
     def _cat_ver(self, photos):
         min_w = min(p.param["wh"][0] for p in photos)
-        cx, cy = photos[0].param["cxy"]
+        x, y = photos[0].param["xy"]
         dy = 0
         for p in photos:
             w, h = p.param["wh"]
             p.param["wh"] = np.array((min_w, h * min_w / w), dtype=np.int32)
-            p.param["cxy"] = np.array((cx, cy + dy), dtype=np.int32)
+            p.param["xy"] = np.array((x, y + dy), dtype=np.int32)
             dy += p.param["wh"][1]
 
     def sample(self, imsize):
@@ -156,10 +162,14 @@ class PhotoGroup(Block):
             self._cat_hor(photos)
         else:
             self._cat_ver(photos)
+        # self._cat_hor(photos)
 
         # ims, infos = list(zip(p.render(imsize) for p in photos))
         ims, infos = [], []
         for p in photos:
+            # im, info = p.render(imsize)
+            # ims.append(im)
+            # infos.append(info)
             try:
                 im, info = p.render(imsize)
                 ims.append(im)

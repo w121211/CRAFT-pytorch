@@ -7,11 +7,10 @@ from typing import List, Tuple, Union, Callable, Dict
 
 import numpy as np
 import cairo
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 import imageio
 import imgaug as ia
 import imgaug.augmenters as iaa
-from faker import Faker
 
 # define types
 Param = Dict[str, Union[int, float, np.ndarray]]
@@ -99,12 +98,6 @@ def to_imsize(key):
     return fn
 
 
-# def clip(key, scope):
-def clip(param, imsize):
-    param["_wh"]
-    pass
-
-
 def bbox(param: dict, imsize: int) -> Tuple[int, int, int, int]:
     _xy = param["_cxy"] - param["_wh"] / 2
     wh = (param["_wh"] * imsize).astype(np.int32)
@@ -135,18 +128,19 @@ class Block(ABC):
     def update_param(self, bbox: Tuple[int, int, int, int], imsize: int):
         """Given bbox, update param's `wh`, `cxy`. Used for undetermined shape"""
         self.param["bbox"] = bbox
-        if bbox is None:
-            raise Exception()
-        xy0 = np.array(bbox[:2], dtype=np.float32)
-        xy1 = np.array(bbox[2:], dtype=np.float32)
-        self.param["_wh"] = (xy1 - xy0) / imsize
-        self.param["_cxy"] = ((xy1 + xy0) / 2) / imsize
+        # if bbox is None:
+        #     raise Exception()
+        if bbox is not None:
+            xy0 = np.array(bbox[:2], dtype=np.float32)
+            xy1 = np.array(bbox[2:], dtype=np.float32)
+            self.param["_wh"] = (xy1 - xy0) / imsize
+            self.param["_cxy"] = ((xy1 + xy0) / 2) / imsize
 
     def info(self, ann: Image.Image, bbox=None, cat=None, bk_infos=None):
         return {
             "ann": ann,
             "cat": cat or self.cat,
-            "bbox": self.param["bbox"] if bbox is None else bbox,
+            "bbox": bbox or self.param["bbox"],
             "param": self.param,
             "bks": bk_infos,
         }
@@ -311,51 +305,6 @@ class Icon(Rect):
         return im, self.info(im)
 
 
-class Line(Block):
-    fake = Faker()
-    fonts = []
-    for f in glob.glob("/workspace/mmdetection/my_dataset/fonts_en/**/*.ttf"):
-        try:
-            _ = ImageFont.truetype(f)
-            fonts.append(f)
-        except:
-            pass
-
-    def __init__(self, param={}):
-        pspace = OrderedDict(
-            [
-                ("i_font", lambda *a: np.random.randint(0, len(self.fonts))),
-                ("textsize", lambda *a: int(np.clip(np.random.normal(14, 5), 5, None))),
-                ("_rgb", lambda *a: np.random.uniform(0, 1, 3)),
-                ("_a", lambda *a: np.array([1.0])),
-                ("_cxy", lambda *a: np.random.uniform(0, 1, 2)),
-                ("rgb", denorm("_rgb", 256)),
-                ("cxy", to_imsize("_cxy")),
-                # ("a"),
-                # ("stroke_w"),
-                # ("stoke_rgb"),
-            ]
-        )
-        super().__init__(pspace, param)
-
-    def sample(self, imsize):
-        super().sample(imsize)
-
-        text = self.fake.sentence(nb_words=5, variable_nb_words=True)
-        font = ImageFont.truetype(
-            self.fonts[self.param["i_font"]], self.param["textsize"]
-        )
-        w, h = font.getsize(text)
-        cx, cy = self.param["cxy"]
-
-        im = Image.new("RGBA", (imsize, imsize))
-        draw = ImageDraw.Draw(im)
-        draw.text((cx - w / 2, cy - h / 2), text, font=font, fill=self.param["rgb"])
-
-        self.update_param(im.getbbox(), imsize)
-        return im, self.info(im)
-
-
 class Group(Block):
     def __init__(self, blocks: list, cat=None):
         self.blocks = blocks
@@ -474,30 +423,3 @@ class Copies(Block):
             infos.append(info)
 
         return ims, infos
-
-
-class Text(Block):
-    pass
-
-
-class TextBox(Block):
-    def __init__(self, bk: List[Block], param={}):
-        pspace = OrderedDict([("n_copies", lambda *a: np.random.randint(min, max))])
-        super().__init__(pspace)
-        self.bk = bk
-        self.lock_params = lock_params
-
-    def sample(self, imsize):
-        super().sample(imsize)
-        im, _ = self.bk.sample(imsize)
-        ims, infos = [], []
-        for _ in range(self.param["n_copies"]):
-            cp = copy.deepcopy(self.bk)  # use copy avoid pollute
-            for p in self.lock_params:
-                cp.pspace.update({p: self.bk.param[p]})
-            im, info = cp.sample(imsize)
-            ims.append(im)
-            infos.append(info)
-
-        return ims, infos
-
