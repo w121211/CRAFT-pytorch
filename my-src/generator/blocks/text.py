@@ -53,6 +53,7 @@ fake = Faker(OrderedDict([
     ('zh_CN', 2),
     ('zh_TW', 3),
 ]))
+# fake = Faker(['en-US', 'zh_CN', 'zh_TW'])
 
 
 class EmptyBoxError(Exception):

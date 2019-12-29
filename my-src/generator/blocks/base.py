@@ -3,7 +3,7 @@ import random
 import copy
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from typing import List, Tuple, Union, Callable, Dict
+from typing import List, Tuple, Union, Callable, Dict, Type
 
 import numpy as np
 import cairo
@@ -11,6 +11,8 @@ from PIL import Image, ImageDraw
 import imageio
 import imgaug as ia
 import imgaug.augmenters as iaa
+
+from .layout import rand_box
 
 # define types
 Param = Dict[str, Union[int, float, np.ndarray]]
@@ -45,7 +47,8 @@ photo_seq = iaa.Sequential(
                 iaa.Add(
                     (-10, 10), per_channel=0.5
                 ),  # change brightness of images (by -10 to 10 of original value)
-                iaa.AddToHueAndSaturation((-20, 20)),  # change hue and saturation
+                # change hue and saturation
+                iaa.AddToHueAndSaturation((-20, 20)),
                 # either change the brightness of the whole image (sometimes
                 # per channel) or change the brightness of subareas
                 iaa.OneOf(
@@ -116,7 +119,7 @@ class Block(ABC):
         self.cat = cat or type(self).__name__
 
     @abstractmethod
-    def sample(self, imsize):
+    def sample(self, imsize, *args, **kwargs):
         p = dict()
         for k, v in self.pspace.items():
             if callable(v):
@@ -161,14 +164,16 @@ class Rect(Block):
         )
         super().__init__(pspace, param)
 
-    def sample(self, imsize):
+    def sample(self, imsize, bbox=None, *args, **kwargs):
         super().sample(imsize)
-        rgba = self.param["rgb"] + self.param["a"]
+        bbox = bbox or self.param["bbox"]
 
+        rgba = self.param["rgb"] + self.param["a"]
         im = Image.new("RGBA", (imsize, imsize))
         draw = ImageDraw.Draw(im)
-        draw.rectangle(self.param["bbox"], fill=rgba, outline=None)
-        return im, self.info(im)
+        draw.rectangle(bbox, fill=rgba, outline=None)
+
+        return im, self.info(im, bbox)
 
 
 class Ellipse(Rect):
@@ -232,7 +237,8 @@ class Grad(Rect):
         cr.rectangle(0, 0, 1, 1)
         cr.set_source(pat)
         cr.fill()
-        data = np.ndarray(shape=(h, w, 4), dtype=np.uint8, buffer=surface.get_data())
+        data = np.ndarray(shape=(h, w, 4), dtype=np.uint8,
+                          buffer=surface.get_data())
         p = Image.fromarray(data)
 
         im = Image.new("RGBA", (imsize, imsize))
@@ -246,7 +252,8 @@ class Pattern(Rect):
         self.samples = glob.glob(root + "/*.jpg") + glob.glob(root + "/*.png")
         pspace = OrderedDict(
             [
-                ("i_sample", lambda *a: np.random.randint(0, len(self.samples), 1)[0]),
+                ("i_sample", lambda *a: np.random.randint(0,
+                                                          len(self.samples), 1)[0]),
                 # ("i_cat", lambda *a: np.random.randint(0, len(self.CLASSES), 1)[0]),
             ]
         )
@@ -300,27 +307,10 @@ class Icon(Rect):
         fill = Image.new("RGBA", (imsize, imsize))
         draw = ImageDraw.Draw(fill)
         draw.rectangle((0, 0, imsize, imsize), fill=rgba, outline=None)
-        im = Image.composite(fill, Image.new("RGBA", (imsize, imsize)), mask=crop)
+        im = Image.composite(fill, Image.new(
+            "RGBA", (imsize, imsize)), mask=crop)
 
         return im, self.info(im)
-
-
-class Group(Block):
-    def __init__(self, blocks: list, cat=None):
-        self.blocks = blocks
-        if cat is not None and cat not in CLASSES:
-            raise Exception("`cat` must be included in `CLASSES`")
-        self.cat = cat  # 判斷是否輸出整個group
-
-    def sample(self, imsize):
-        im = Image.new("RGBA", (imsize, imsize))
-        info = []
-        for bk in self.blocks:
-            _im, _info = bk.sample(imsize)
-            im.alpha_composite(_im)
-            info.append(_info)
-        return im, info
-        # return zip(*[bk.sample(imsize) for bk in self.blocks])
 
 
 class Choice(Block):
@@ -375,7 +365,8 @@ class CropMask(Block):
             im,
             self.info(
                 m_im,
-                cat="{}&{}".format(type(self.mask).__name__, type(self.fill).__name__),
+                cat="{}&{}".format(type(self.mask).__name__,
+                                   type(self.fill).__name__),
             ),
         )
 
@@ -394,7 +385,8 @@ class Blend(Block):
         infos = [c_info]
         f_im = Image.new("RGBA", (imsize, imsize))
         for b in self.blocks[1:]:
-            b.pspace.update({"_wh": crop.param["_wh"], "_cxy": crop.param["_cxy"]})
+            b.pspace.update(
+                {"_wh": crop.param["_wh"], "_cxy": crop.param["_cxy"]})
             _im, _info = b.sample(imsize)
             f_im.alpha_composite(_im)
             infos.append(_info)
@@ -405,7 +397,8 @@ class Blend(Block):
 
 class Copies(Block):
     def __init__(self, bk: Block, min: int, max: int, lock_params=tuple()):
-        pspace = OrderedDict([("n_copies", lambda *a: np.random.randint(min, max))])
+        pspace = OrderedDict(
+            [("n_copies", lambda *a: np.random.randint(min, max))])
         super().__init__(pspace)
         self.bk = bk
         self.lock_params = lock_params
@@ -421,5 +414,40 @@ class Copies(Block):
             im, info = cp.sample(imsize)
             ims.append(im)
             infos.append(info)
+
+        return ims, infos
+
+
+class BoxLayoutGroup(Block):
+    def __init__(self, blocks: List[Type[Rect]]):
+        def _wh(p, *a):
+            _wh = np.clip(np.random.normal(0.6, 0.2, 2), 0.3, 1)
+            _wh = np.clip(_wh, 0, 2 - 2 * p["_cxy"])
+            _wh = np.clip(_wh, 0, 2 * p["_cxy"])
+            return _wh
+
+        pspace = OrderedDict(
+            [
+                ("_cxy", lambda *a: np.random.uniform(0.15, 0.85, 2)),
+                ("_wh", _wh),
+                ("bbox", bbox),  # (x1, y1, x2, y2)
+            ]
+        )
+        super().__init__(pspace)
+        self.blocks = blocks
+
+    def sample(self, imsize: int):
+        super().sample(imsize)
+        x0, y0, x1, y1 = self.param["bbox"]
+        root = rand_box(np.array([x1 - x0, y1 - y0]))
+        root.xy = np.array([x0, y0], dtype=np.int32)
+        root.set_xy()
+
+        ims, infos = [], []
+        for b in root.leafs():
+            cp = copy.deepcopy(random.choice(self.blocks))
+            _im, _info = cp.sample(imsize, tuple(b.bbox()))
+            ims.append(_im)
+            infos.append(_info)
 
         return ims, infos

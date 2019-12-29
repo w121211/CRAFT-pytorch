@@ -23,8 +23,8 @@ import copy
 import numpy as np
 from PIL import Image
 
-import blocks as bk
-from mask import create_mask
+from . import blocks as bk
+from .mask import create_mask
 
 CATEGORIES = [
     {"id": 0, "name": "Null", "supercategory": "Block"},
@@ -32,12 +32,14 @@ CATEGORIES = [
     {"id": 2, "name": "Grad", "supercategory": "Block"},
     {"id": 3, "name": "Icon", "supercategory": "Block"},
     {"id": 4, "name": "Pattern", "supercategory": "Block"},
-    {"id": 5, "name": "Line", "supercategory": "Block"},
+    # {"id": 5, "name": "Line", "supercategory": "Block"},
     {"id": 6, "name": "Blend", "supercategory": "Block"},
     {"id": 7, "name": "Blend_Rect", "supercategory": "Block"},
     {"id": 8, "name": "Blend_Icon", "supercategory": "Block"},
     {"id": 9, "name": "Photo_Rect", "supercategory": "Block"},
     {"id": 10, "name": "Photo_Trans", "supercategory": "Block"},
+    {"id": 11, "name": "Box", "supercategory": "Block"},
+    {"id": 12, "name": "Token", "supercategory": "Block"},
 ]
 
 PARAMS_TO_PREDICT = (
@@ -200,11 +202,11 @@ if __name__ == "__main__":
         if i % 100 == 0:
             print(i)
 
-        im, bks = random.choice(samplers).sample()
-        # try:
-        #     im, bks = random.choice(samplers).sample()
-        # except:
-        #     continue
+        # im, bks = random.choice(samplers).sample()
+        try:
+            im, bks = random.choice(samplers).sample()
+        except:
+            continue
         im_path = os.path.join(opt.save_to, opt.folder,
                                "images", "{}.png".format(i))
         im.save(im_path)

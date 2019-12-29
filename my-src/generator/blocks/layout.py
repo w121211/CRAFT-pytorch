@@ -1,3 +1,4 @@
+import random
 from typing import List, Tuple, Union
 import numpy as np
 
@@ -15,6 +16,17 @@ class Node:
     def insert(self, node: "Node"):
         self.children.append(node)
 
+    def leafs(self):
+        leafs = []
+
+        def _leafs(node: "Node"):
+            if len(node.children) == 0:
+                leafs.append(node)
+            for c in node.children:
+                _leafs(c)
+        _leafs(self)
+        return leafs
+
 
 class Box(Node):
     def __init__(self, *args, **kwargs):
@@ -22,6 +34,10 @@ class Box(Node):
         self.rxy = np.zeros(2, dtype=np.int32)  # related xy
         self.xy: np.ndarray = None
         self.wh: np.ndarray = None
+
+    def __repr__(self) -> str:
+        c = self.children if len(self.children) > 0 else None
+        return "<Box:{} {}>".format(self.bbox(), c)
 
     def set_xy(self, parent: Union["Box", None] = None):
         if parent is not None:
@@ -31,35 +47,11 @@ class Box(Node):
         for c in self.children:
             c.set_xy(self)
 
-
-class BoxTemplate(Box):
-    def __init__(self, align=None, children=[], ratio=[]):
-        self.align = align
-        self.children = children
-        self.ratio = ratio
-
-        r = [0] + ratio + [1]
-        rr = np.repeat(np.expand_dims(r, axis=1), 2, axis=1)
-        mask = np.array([1, 0]) if align == HOR else np.array([0, 1])
-        _rxy0 = rr[:-1] * mask
-        _rxy1 = rr[1:] * mask + np.array([0, 1])
-        _wh = _rxy1 - _rxy0
-
-        self._rxy0 = _rxy0
-        self._wh = _wh
-
-        print(self._rxy0)
-        print(self._wh)
-
-    def spawn(self, wh: np.ndarray):
-        root = Box()
-        root.wh = wh
-
-        for c, _rxy0, _wh in zip(self.children, self._rxy0, self._wh):
-            b = c.spawn(_wh * wh)
-            b.rxy = (_rxy0 * wh).astype(np.int32)
-            root.insert(b)
-        return root
+    def bbox(self):
+        return np.concatenate([self.xy, self.xy + self.wh])
+        # if self.xy is None:
+        #     return np.concatenate([self.rxy, self.rxy + self.wh])
+        # else:
 
 
 def align(boxes: List[Box], by: str, anchor: Union[float, None], dapart: int = 0) -> Tuple[int, int]:
@@ -104,19 +96,75 @@ def align(boxes: List[Box], by: str, anchor: Union[float, None], dapart: int = 0
         return dx - dapart, max_h
 
 
-def rand_boxes() -> List[Box]:
-    pass
+class BoxTemplate(Box):
+    def __init__(self, align=None, children=[], ratio=[]):
+        super().__init__()
+        for c in children:
+            if callable(c):
+                c = c()
+            if not isinstance(c, BoxTemplate):
+                raise Exception
+            self.insert(c)
+        self.align = align
+        self.ratio = ratio
 
-# r2 = [1/2, 1/3, 2/3, 1/4, 4/3]
-# r3 = [[1/3, 2/3], [1/4, 2/4], [1/4, 3/4]]
+        r = [0] + ratio + [1]
+        rr = np.repeat(np.expand_dims(r, axis=1), 2, axis=1)
+        mask_x = np.array([1, 0])
+        mask_y = np.array([0, 1])
+        mask1, mask2 = (mask_x, mask_y) if align == HOR else (mask_y, mask_x)
+        _rxy0 = rr[:-1] * mask1
+        _rxy1 = rr[1:] * mask1 + np.array([1, 1]) * mask2
+        _wh = _rxy1 - _rxy0
 
-# b = BT()
-# bh2 = BT(HOR, [BT(), BT()], choice(r2))
-# bh3 = BT(HOR, [BT(), BT(), BT()], choice(r2))
+        self._rxy0 = _rxy0
+        self._wh = _wh
 
-# _bh2 = [[b, bh2], [b, bh3], [bh2, b], [bh3, b], [bh2, bh2], [bh3, bh3], [_bh2, _bh3], , [bh3, bh2]]
-# _bh3 = [[b, bh2, b], [b, bh3, b], [b, bh2, bh3], [], [_bh3, _b], [bh3, bh2]]
+        # print("-------")
+        # print(r)
+        # print(rr)
+        # print(self._rxy0)
+        # print(_rxy1)
+        # print(self._wh)
 
-# bvh2 = BT(VER, [_bh2, _bh2])
-# bhv2 = BT(HOR, [bv2, bv2], choice(r2))
-# bhv3 = BT(HOR, [bv2, bv2], choice(r2))
+    def one(self, wh: np.ndarray):
+        root = Box()
+        root.wh = wh
+        for c, _rxy0, _wh in zip(self.children, self._rxy0, self._wh):
+            b = c.one((_wh * wh).astype(np.int32))
+            b.rxy = (_rxy0 * wh).astype(np.int32)
+            root.insert(b)
+        return root
+
+
+r2 = [[1 / 2], [1 / 3], [2 / 3], [1 / 4], [3 / 4]]
+r3 = [[1 / 3, 2 / 3], [1 / 4, 2 / 4],
+      [1 / 4, 3 / 4], [2 / 4, 3 / 4], [1 / 3, 3 / 4]]
+b2s = lambda x2, x3: [
+    [b, x2], [x2, b], [b, x3], [x3, b],
+    [x2, x2], [x3, x3], [x2, x3], [x3, x2]
+]
+b3s = lambda x2, x3: [
+    [b, b, x2], [b, x2, b], [x2, b, b],
+    [b, b, x3], [b, x3, b], [x3, b, b],
+    [b, x2, x3], [x2, b, x3], [x2, x3, b],
+    [b, x3, x2], [x3, b, x2], [x3, x2, b],
+    [x2, x3, x2], [x3, x2, x3]
+]
+
+b = lambda: BoxTemplate()
+bh2 = lambda: BoxTemplate(HOR, [b, b], random.choice(r2))
+bh3 = lambda: BoxTemplate(HOR, [b, b, b], random.choice(r3))
+bvh2 = lambda: BoxTemplate(VER, random.choice(
+    b2s(bh2, bh3)), random.choice(r2))
+bvh3 = lambda: BoxTemplate(VER, random.choice(
+    b3s(bh2, bh3)), random.choice(r3))
+
+
+def rand_box(wh: np.ndarray):
+    bt = random.choice([bh2, bh3, bvh2, bvh3])()
+    # bt = random.choice([bvh3])()
+    # bt = BoxTemplate(VER, [BoxTemplate(), BoxTemplate(
+    #     HOR, [BoxTemplate(), BoxTemplate()], [1 / 2]
+    # )], [1 / 2])
+    return bt.one(wh)

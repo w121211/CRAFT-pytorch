@@ -124,14 +124,15 @@ def main():
 
                 # go through each associated annotation
                 for annotation_filename in annotation_files:
-                    # TODO: 非常天真的bug fix，限定於cat是按照複雜度排列，仍有可能出錯
+                    # TODO: naive bug fix，限定於cat是按照複雜度排列，仍有可能出錯
                     class_id = [
                         x["id"] for x in CATEGORIES if x["name"] in annotation_filename
                     ][-1]
 
                     category_info = {
                         "id": class_id,
-                        "is_crowd": "crowd" in image_filename,
+                        # "is_crowd": "crowd" in image_filename,
+                        "is_crowd": True,  # 強制讓segmentation用png->binary mask
                     }
                     binary_mask = png_to_binary_mask(annotation_filename)
                     annotation_info = pycococreatortools.create_annotation_info(
@@ -140,8 +141,8 @@ def main():
                         category_info,
                         binary_mask,
                         image.size,
-                        # tolerance=2,
-                        tolerance=1,
+                        # tolerance=10,
+                        tolerance=2,
                     )
 
                     # print(annotation_info)

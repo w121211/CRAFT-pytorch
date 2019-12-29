@@ -2,6 +2,7 @@ import glob
 import random
 import copy
 from collections import OrderedDict
+from typing import List, Type
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -9,7 +10,7 @@ import imageio
 import imgaug as ia
 import imgaug.augmenters as iaa
 
-from .base import Block, to_imsize, bbox
+from .base import Block, Rect, to_imsize, bbox
 
 photo_seq = iaa.Sequential(
     [
@@ -74,12 +75,14 @@ class Photo(Block):
                 ("_wh", lambda *a: np.clip(np.random.normal(0.6, 0.2, 2), 0.2, 1)),
                 # ("_wh", lambda *a: np.random.normal(0.6, 0.2, 2)),
                 ("_cxy", lambda *a: np.random.uniform(0, 1, 2)),
-                ("i_sample", lambda *a: np.random.randint(0, len(self.samples), 1)[0]),
+                ("i_sample", lambda *a: np.random.randint(0,
+                                                          len(self.samples), 1)[0]),
                 ("wh", to_imsize("_wh")),
                 ("cxy", to_imsize("_cxy")),
                 ("bbox", bbox),
                 # ("repeat", lambda *a: False),
-                ("_xy", lambda *a: np.random.uniform(0, 0.7, 2)),  # use for photo group
+                # use for photo group
+                ("_xy", lambda *a: np.random.uniform(0, 0.7, 2)),
                 ("xy", to_imsize("_xy")),
             ]
         )
@@ -98,23 +101,27 @@ class Photo(Block):
         self.update_param(im.getbbox(), imsize)
         return im, self.info(im)
 
-    def sample(self, imsize):
+    def sample(self, imsize, bbox=None):
         super().sample(imsize)
-        cx, cy = self.param["cxy"]
 
         # p = imageio.imread(self.samples[self.param["i_sample"]])
         # p = photo_seq.augment_image(p)
         # p = Image.fromarray(p).convert("RGBA")
         p = Image.open(self.samples[self.param["i_sample"]]).convert("RGBA")
+        self._photo = copy.deepcopy(p)  # for render
 
-        self._photo = copy.deepcopy(p)
-
-        p.thumbnail(self.param["wh"])
+        if bbox is None:
+            cx, cy = self.param["cxy"]
+            p.thumbnail(self.param["wh"])
+            x0, y0 = int(cx - p.width / 2), int(cy - p.height / 2)
+        else:
+            x0, y0, x1, y1 = bbox
+            p = p.resize((x1 - x0, y1 - y0), Image.BICUBIC)
 
         im = Image.new("RGBA", (imsize, imsize))
-        im.paste(p, (int(cx - p.width / 2), int(cy - p.height / 2)))
-
+        im.paste(p, (x0, y0))
         self.update_param(im.getbbox(), imsize)
+
         return im, self.info(im)
 
 
