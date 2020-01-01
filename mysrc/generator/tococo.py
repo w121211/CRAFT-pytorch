@@ -6,8 +6,8 @@ import re
 import fnmatch
 import numpy as np
 from PIL import Image
-from pycococreatortools import pycococreatortools
 
+from ..pycococreator.pycococreatortools import pycococreatortools
 from main import CATEGORIES
 
 parser = argparse.ArgumentParser()
@@ -62,7 +62,8 @@ def filter_for_jpeg(root, files):
 def filter_for_annotations(root, files, image_filename):
     file_types = ["*.png"]
     file_types = r"|".join([fnmatch.translate(x) for x in file_types])
-    basename_no_extension = os.path.splitext(os.path.basename(image_filename))[0]
+    basename_no_extension = os.path.splitext(
+        os.path.basename(image_filename))[0]
     file_name_prefix = basename_no_extension + ".*"
     files = [os.path.join(root, f) for f in files]
     files = [f for f in files if re.match(file_types, f)]
@@ -120,7 +121,8 @@ def main():
 
             # filter for associated png annotations
             for root, _, files in os.walk(ANNOTATION_DIR):
-                annotation_files = filter_for_annotations(root, files, image_filename)
+                annotation_files = filter_for_annotations(
+                    root, files, image_filename)
 
                 # go through each associated annotation
                 for annotation_filename in annotation_files:
@@ -135,14 +137,14 @@ def main():
                         "is_crowd": True,  # 強制讓segmentation用png->binary mask
                     }
                     binary_mask = png_to_binary_mask(annotation_filename)
-                    annotation_info = pycococreatortools.create_annotation_info(
+                    annotation_info = pycococreatortools.create_annotation_info_without_mask(
                         segmentation_id,
                         image_id,
                         category_info,
                         binary_mask,
                         image.size,
                         # tolerance=10,
-                        tolerance=2,
+                        # tolerance=2,
                     )
 
                     # print(annotation_info)
