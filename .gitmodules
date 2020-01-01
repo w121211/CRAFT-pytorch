@@ -1,0 +1,3 @@
+[submodule "mysrc/pycococreator"]
+	path = mysrc/pycococreator
+	url = https://github.com/waspinator/pycococreator.git
