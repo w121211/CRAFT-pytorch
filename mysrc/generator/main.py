@@ -23,8 +23,8 @@ import copy
 import numpy as np
 from PIL import Image
 
-from . import blocks as bk
-from .mask import create_mask
+import blocks as bk
+from mask import create_mask
 
 CATEGORIES = [
     {"id": 0, "name": "Null", "supercategory": "Block"},
@@ -176,11 +176,16 @@ if __name__ == "__main__":
             # bk.PhotoGroup(bk.Photo("/workspace/CoordConv/data/flickr/*.jpg", cat="Photo_Rect"))
         ]
     )
-
     tb = bk.Textbox()
+    blg = bk.BoxLayoutGroup([
+        bk.Photo(
+            "/workspace/CRAFT-pytorch/data/crawled_fb/model/*.jpg", cat="Photo_Rect"
+        ),
+        bk.Rect()
+    ])
 
     samplers = [
-        Sampler([bg, tb], opt)
+        Sampler([blg], opt)
         # Sampler([bg, icons, lines], opt),
         # Sampler([bg, lines, icons], opt),
         # Sampler([bg, pg, icons, lines], opt),

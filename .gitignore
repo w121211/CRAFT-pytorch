@@ -10,7 +10,7 @@ data*/
 .ipynb_checkpoints
 __pycache__
 tmp
-my-dataset
+mydataset
 out
 example.svg
 test.png

@@ -421,7 +421,7 @@ class Copies(Block):
 class BoxLayoutGroup(Block):
     def __init__(self, blocks: List[Type[Rect]]):
         def _wh(p, *a):
-            _wh = np.clip(np.random.normal(0.6, 0.2, 2), 0.3, 1)
+            _wh = np.clip(np.random.normal(0.7, 0.1, 2), 0.5, 1)
             _wh = np.clip(_wh, 0, 2 - 2 * p["_cxy"])
             _wh = np.clip(_wh, 0, 2 * p["_cxy"])
             return _wh
