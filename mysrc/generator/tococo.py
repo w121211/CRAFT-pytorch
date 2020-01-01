@@ -7,18 +7,16 @@ import fnmatch
 import numpy as np
 from PIL import Image
 
-from ..pycococreator.pycococreatortools import pycococreatortools
+from pycococreatortools import pycococreatortools
 from main import CATEGORIES
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--folder", type=str, default="train")
+parser.add_argument("--root", type=str)
 opt = parser.parse_args()
 
-# PROJECT_ROOT = os.path.join(os.getcwd(), os.pardir)
-PROJECT_ROOT = os.path.join(os.getcwd())
-ROOT_DIR = os.path.join(PROJECT_ROOT, "../../my-dataset/" + opt.folder)
-IMAGE_DIR = os.path.join(ROOT_DIR, "images")
-ANNOTATION_DIR = os.path.join(ROOT_DIR, "annotations")
+ROOT = os.path.join(opt.root)
+IMAGE_DIR = os.path.join(ROOT, "images")
+ANNOTATION_DIR = os.path.join(ROOT, "annotations")
 
 INFO = {
     "description": "Example Dataset",
@@ -155,7 +153,7 @@ def main():
 
             image_id = image_id + 1
 
-    with open("{}/annotation.json".format(ROOT_DIR), "w") as output_json_file:
+    with open("{}/annotation.json".format(ROOT), "w") as output_json_file:
         json.dump(coco_output, output_json_file)
 
 
