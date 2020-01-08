@@ -10,7 +10,6 @@ RAND = "RAND"
 class Node:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.parent = None
         self.children = []
 
     def insert(self, node: "Node"):
@@ -25,6 +24,7 @@ class Node:
             for c in node.children:
                 _leafs(c)
         _leafs(self)
+
         return leafs
 
 
@@ -36,7 +36,7 @@ class Box(Node):
         self.wh: np.ndarray = None
 
     def __repr__(self) -> str:
-        c = self.children if len(self.children) > 0 else None
+        c = self.children if len(self.children) > 0 else "NoChildren"
         return "<Box:{} {}>".format(self.bbox(), c)
 
     def set_xy(self, parent: Union["Box", None] = None):
@@ -48,10 +48,21 @@ class Box(Node):
             c.set_xy(self)
 
     def bbox(self):
-        return np.concatenate([self.xy, self.xy + self.wh])
-        # if self.xy is None:
-        #     return np.concatenate([self.rxy, self.rxy + self.wh])
-        # else:
+        if self.xy is None:
+            return np.concatenate([self.rxy, self.rxy + self.wh])
+        else:
+            return np.concatenate([self.xy, self.xy + self.wh])
+
+    def clone(self, cls, *args, **kwargs):
+        root = cls(*args, **kwargs)
+        root.rxy = self.rxy
+        root.xy = self.xy
+        root.wh = self.wh
+
+        for c in self.children:
+            c = c.clone(cls, *args, **kwargs)
+            root.insert(c)
+        return root
 
 
 def align(boxes: List[Box], by: str, anchor: Union[float, None], dapart: int = 0) -> Tuple[int, int]:
@@ -137,13 +148,18 @@ class BoxTemplate(Box):
         return root
 
 
+# ratios
 r2 = [[1 / 2], [1 / 3], [2 / 3], [1 / 4], [3 / 4]]
 r3 = [[1 / 3, 2 / 3], [1 / 4, 2 / 4],
       [1 / 4, 3 / 4], [2 / 4, 3 / 4], [1 / 3, 3 / 4]]
+
+# 2-box
 b2s = lambda x2, x3: [
     [b, x2], [x2, b], [b, x3], [x3, b],
     [x2, x2], [x3, x3], [x2, x3], [x3, x2]
 ]
+
+# 3-box
 b3s = lambda x2, x3: [
     [b, b, x2], [b, x2, b], [x2, b, b],
     [b, b, x3], [b, x3, b], [x3, b, b],
@@ -155,14 +171,19 @@ b3s = lambda x2, x3: [
 b = lambda: BoxTemplate()
 bh2 = lambda: BoxTemplate(HOR, [b, b], random.choice(r2))
 bh3 = lambda: BoxTemplate(HOR, [b, b, b], random.choice(r3))
+# bvh2 = lambda: BoxTemplate(VER, random.choice(
+#     b2s(bh2, bh3)), random.choice(r2))
 bvh2 = lambda: BoxTemplate(VER, random.choice(
-    b2s(bh2, bh3)), random.choice(r2))
+    b2s(b, bh2)), random.choice(r2))
 bvh3 = lambda: BoxTemplate(VER, random.choice(
     b3s(bh2, bh3)), random.choice(r3))
 
 
-def rand_box(wh: np.ndarray):
-    bt = random.choice([bh2, bh3, bvh2, bvh3])()
+def rand_box(wh: np.ndarray,
+             choices=[bvh2]
+             # choices=[bh2, bh3, bvh2, bvh3]
+             ):
+    bt = random.choice(choices)()
     # bt = random.choice([bvh3])()
     # bt = BoxTemplate(VER, [BoxTemplate(), BoxTemplate(
     #     HOR, [BoxTemplate(), BoxTemplate()], [1 / 2]

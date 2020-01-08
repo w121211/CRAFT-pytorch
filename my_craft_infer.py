@@ -56,7 +56,8 @@ parser.add_argument(
 parser.add_argument(
     "--text_threshold", default=0.7, type=float, help="text confidence threshold"
 )
-parser.add_argument("--low_text", default=0.4, type=float, help="text low-bound score")
+parser.add_argument("--low_text", default=0.4, type=float,
+                    help="text low-bound score")
 parser.add_argument(
     "--link_threshold", default=0.4, type=float, help="link confidence threshold"
 )
@@ -150,14 +151,17 @@ def test_net(
     t1 = time.time() - t1
 
     # render results (optional)
-    render_img = score_text.copy()
-    render_img = np.hstack((render_img, score_link))
-    ret_score_text = imgproc.cvt2HeatmapImg(render_img)
+    # render_img = score_text.copy()
+    # render_img = np.hstack((render_img, score_link))
+    # ret_score_text = imgproc.cvt2HeatmapImg(render_img)
+    score_text = (np.clip(score_text, 0, 1) * 255).astype(np.uint8)
+    score_link = (np.clip(score_link, 0, 1) * 255).astype(np.uint8)
 
     if args.show_time:
         print("\ninfer/postproc time : {:.3f}/{:.3f}".format(t0, t1))
 
-    return boxes, polys, ret_score_text
+    # return boxes, polys, ret_score_text
+    return boxes, polys, score_text, score_link
 
 
 if __name__ == "__main__":
@@ -187,12 +191,14 @@ if __name__ == "__main__":
         refine_net = RefineNet()
         print("Loading weights of refiner from checkpoint (" + args.refiner_model + ")")
         if args.cuda:
-            refine_net.load_state_dict(copyStateDict(torch.load(args.refiner_model)))
+            refine_net.load_state_dict(
+                copyStateDict(torch.load(args.refiner_model)))
             refine_net = refine_net.cuda()
             refine_net = torch.nn.DataParallel(refine_net)
         else:
             refine_net.load_state_dict(
-                copyStateDict(torch.load(args.refiner_model, map_location="cpu"))
+                copyStateDict(torch.load(
+                    args.refiner_model, map_location="cpu"))
             )
 
         refine_net.eval()
@@ -202,13 +208,13 @@ if __name__ == "__main__":
 
     # load data
     for k, image_path in enumerate(image_list):
+        if "_mask.png" in image_path:
+            continue
         print(
-            "Test image {:d}/{:d}: {:s}".format(k + 1, len(image_list), image_path),
-            end="\r",
-        )
+            "Test image {:d}/{:d}: {:s}".format(k + 1, len(image_list), image_path), end="\r")
         image = imgproc.loadImage(image_path)
 
-        bboxes, polys, score_text = test_net(
+        bboxes, polys, score_text, score_link = test_net(
             net,
             image,
             args.text_threshold,
@@ -218,16 +224,29 @@ if __name__ == "__main__":
             args.poly,
             refine_net,
         )
-        # print(bboxes)
 
         # save score text
         filename, file_ext = os.path.splitext(os.path.basename(image_path))
-        mask_file = result_folder + "/res_" + filename + "_mask.jpg"
+        mask_file = result_folder + "/res_" + filename + "_mask_text.jpg"
+
+        height, width, channel = image.shape
+        score_text = cv2.resize(
+            score_text, (width, height), interpolation=cv2.INTER_LINEAR)
+        # score_text = cv2.applyColorMap(score_text, cv2.COLORMAP_JET)
+        # fin = cv2.addWeighted(image, 0.7, score_text, 0.3, 0)
+
         cv2.imwrite(mask_file, score_text)
 
-        file_utils.saveResult(
-            image_path, image[:, :, ::-1], polys, dirname=result_folder
-        )
+        if ".png" in image_path:
+            cv2.imwrite(image_path.replace(".png", "_mask.png"), score_text)
+        elif ".jpg" in image_path:
+            cv2.imwrite(image_path.replace(".jpg", "_mask.png"), score_text)
+        # mask_file = result_folder + "/res_" + filename + "_mask_link.jpg"
+        # cv2.imwrite(mask_file, score_link)
+
+        # file_utils.saveResult(
+        #     image_path, image[:, :, ::-1], polys, dirname=result_folder
+        # )
         # file_utils.saveResult(
         #     image_path, image[:, :, ::-1], bboxes, dirname=result_folder
         # )
