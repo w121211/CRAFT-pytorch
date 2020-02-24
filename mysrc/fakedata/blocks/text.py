@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw, ImageFont
 from faker import Faker
 
 from .base import Block, to_imsize, denorm, bbox
+from .lorem import cn_lorem
 from . import layout
 
 
@@ -25,25 +26,6 @@ def load_fonts(roots: List[str]) -> List[ImageFont.FreeTypeFont]:
     return fonts
 
 
-def rand_xy(wh: np.ndarray, imsize: int) -> np.ndarray:
-    m = np.clip(np.array([imsize, imsize]) - wh, 0, None)
-    x = np.random.randint(0, m[0] + 1)
-    y = np.random.randint(0, m[1] + 1)
-    return np.array([x, y])
-
-
-# def rand_text(fake: Faker, lang: int):
-#     parts = [" ".join(fake.words(np.random.randint(1, 6)))
-#              for _ in range(np.random.randint(1, 5))]
-#     for i, p in enumerate(parts):
-#         if random.random() < 0.2:
-#             if random.random() < 0.5:
-#                 parts[i] = p.split(" ")
-#             else:
-#                 parts[i] = [p]
-#     return parts
-
-
 fonts_en = load_fonts(["/workspace/post-generator/asset/fonts_en/**/*.ttf"])
 # fonts_cn = load_fonts(["/workspace/post-generator/asset/fonts_cn/**/*.ttf",
 #                        "/workspace/post-generator/asset/fonts_cn/**/*.otf"])
@@ -55,6 +37,68 @@ fake = Faker(OrderedDict([
     ('zh_CN', 2),
     ('zh_TW', 3),
 ]))
+
+
+def rand_xy(wh: np.ndarray, imsize: int) -> np.ndarray:
+    m = np.clip(np.array([imsize, imsize]) - wh, 0, None)
+    x = np.random.randint(0, m[0] + 1)
+    y = np.random.randint(0, m[1] + 1)
+    return np.array([x, y])
+
+
+def rand_lines(i_lang, max_words, max_lines) -> List[str]:
+    f, _, _ = {
+        0: (fake["en-US"], "This is a sample text", 16),
+        1: (fake["zh_CN"], "这是一个很简单的中文测试", 16),
+        2: (fake["zh_TW"], "這是一個很簡單的中文測試", 16)
+    }[i_lang]
+
+    # n_lines = np.radnom.randint(1, max_lines + 1)
+    n_lines = np.clip(np.random.normal(1, 2), 1, max_lines).astype(np.int32)
+    # lines = [f.text(np.random.randint(5, max_words + 1))[:-1]
+    #          for _ in range(n_lines)]
+    lines = [cn_lorem(np.random.randint(5, max_words + 1))
+             for _ in range(n_lines)]
+
+    return lines
+
+
+def rand_text_by_wh(box_wh: np.ndarray, i_lang: int, font_path: str) -> str:
+    f, t, s = {
+        0: (fake["en-US"], "This is a sample text", 16),
+        1: (fake["zh_CN"], "这是一个很简单的中文测试", 16),
+        2: (fake["zh_TW"], "這是一個很簡單的中文測試", 16)
+    }[i_lang]
+
+    bw, bh = box_wh
+    font = ImageFont.truetype(font_path, s)
+    w, h = font.getsize(t)
+
+    try:
+        text = f.text(max_nb_chars=int(len(t) * bw / w))[:-1]
+        w, h = font.getsize(text)
+        fontsize = int(s * bw / w)
+    except:
+        text = ""
+        fontsize = 0
+
+    return text, fontsize
+
+
+def randbox():
+    # return layout.rand_box(np.array([500, 500])).clone(_Box, fonts_cn, 1)
+    return layout.Box().clone(_Box, fonts_cn, 1)
+
+# def rand_text(fake: Faker, lang: int):
+#     parts = [" ".join(fake.words(np.random.randint(1, 6)))
+#              for _ in range(np.random.randint(1, 5))]
+#     for i, p in enumerate(parts):
+#         if random.random() < 0.2:
+#             if random.random() < 0.5:
+#                 parts[i] = p.split(" ")
+#             else:
+#                 parts[i] = [p]
+#     return parts
 
 
 class EmptyBoxError(Exception):
@@ -223,8 +267,8 @@ class _Line(layout.Box, Block):
         if bbox is None:
             raise EmptyLineError
 
-        # return im, [self.info(im, cat="Line", bbox=bbox)]
-        return im, []
+        return im, [self.info(im, cat="Line", bbox=bbox)]
+        # return im, []
 
     # def _render(self, imsize: int):
     #     im = Image.new("RGBA", (imsize, imsize))
@@ -316,8 +360,6 @@ class _Box(layout.Box, Block):
 
     def sample(self, imsize: int) -> Tuple[Image.Image, List[dict]]:
         self = randbox()
-        # self.xy = np.zeros(2)
-        # self.set_xy()
         self._sample_param(imsize)
 
         # sample text
@@ -378,10 +420,12 @@ class _Box(layout.Box, Block):
             except (EmptyLineError, EmptyBoxError):
                 pass
 
+        im = im.rotate(np.random.randint(-60, 60))
+
         bbox = im.getbbox()
         if bbox is None:
             raise EmptyBoxError
-        infos.append(self.info(im, bbox=bbox, cat="Box"))
+        # infos.append(self.info(im, bbox=bbox, cat="Box"))
 
         return im, infos
 
@@ -429,47 +473,6 @@ class _Box(layout.Box, Block):
             else:
                 print(c)
                 raise Exception("Unsupported type")
-
-
-def rand_lines(i_lang, max_words, max_lines) -> List[str]:
-    f, _, _ = {
-        0: (fake["en-US"], "This is a sample text", 16),
-        1: (fake["zh_CN"], "这是一个很简单的中文测试", 16),
-        2: (fake["zh_TW"], "這是一個很簡單的中文測試", 16)
-    }[i_lang]
-
-    # n_lines = np.radnom.randint(1, max_lines + 1)
-    n_lines = np.clip(np.random.normal(1, 2), 1, max_lines).astype(np.int32)
-    lines = [f.text(np.random.randint(5, max_words + 1))[:-1]
-             for _ in range(n_lines)]
-
-    return lines
-
-
-def rand_text_by_wh(box_wh: np.ndarray, i_lang: int, font_path: str) -> str:
-    f, t, s = {
-        0: (fake["en-US"], "This is a sample text", 16),
-        1: (fake["zh_CN"], "这是一个很简单的中文测试", 16),
-        2: (fake["zh_TW"], "這是一個很簡單的中文測試", 16)
-    }[i_lang]
-
-    bw, bh = box_wh
-    font = ImageFont.truetype(font_path, s)
-    w, h = font.getsize(t)
-
-    try:
-        text = f.text(max_nb_chars=int(len(t) * bw / w))[:-1]
-        w, h = font.getsize(text)
-        fontsize = int(s * bw / w)
-    except:
-        text = ""
-        fontsize = 0
-
-    return text, fontsize
-
-
-def randbox():
-    return layout.rand_box(np.array([500, 500])).clone(_Box, fonts_cn, 1)
 
 
 # class _FixedBox(_Box):

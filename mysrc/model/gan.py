@@ -60,7 +60,8 @@ class VAEDecoder(nn.Module):
         #     nn.Sigmoid(),
         # )
         self.init_size = opt.imsize // 4
-        self.l1 = nn.Sequential(nn.Linear(opt.z_dim, 128 * self.init_size ** 2))
+        self.l1 = nn.Sequential(
+            nn.Linear(opt.z_dim, 128 * self.init_size ** 2))
 
         self.conv = nn.Sequential(
             nn.BatchNorm2d(128),
@@ -119,8 +120,7 @@ class Generator(nn.Module):
             layer = rgb[:, i, :, :, :] * torch.ones(N, 1, self.imsize, self.imsize).to(
                 self.device
             )
-            mask = x_img[:, i : i + 1, :, :]
+            mask = x_img[:, i: i + 1, :, :]
             bg = mask * layer + (1.0 - mask) * bg
 
         return bg
-

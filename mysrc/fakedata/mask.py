@@ -69,7 +69,8 @@ def _add_bbox(mask: np.array, bbox: np.array):
     if not Polygon(bbox.reshape([4, 2]).astype(np.int32)).is_valid:
         return mask
 
-    top_left = np.array([np.min(bbox[:, 0]), np.min(bbox[:, 1])]).astype(np.int32)
+    top_left = np.array(
+        [np.min(bbox[:, 0]), np.min(bbox[:, 1])]).astype(np.int32)
     if top_left[1] > mask.shape[0] or top_left[0] > mask.shape[1]:
         # This means there is some bug in the character bbox
         # Will have to look into more depth to understand this
@@ -82,8 +83,8 @@ def _add_bbox(mask: np.array, bbox: np.array):
     end_row = min(top_left[1] + warped.shape[0], mask.shape[0])
     end_col = min(top_left[0] + warped.shape[1], mask.shape[1])
 
-    mask[max(top_left[1], 0) : end_row, max(top_left[0], 0) : end_col] += warped[
-        start_row : end_row - top_left[1], start_col : end_col - top_left[0]
+    mask[max(top_left[1], 0): end_row, max(top_left[0], 0): end_col] += warped[
+        start_row: end_row - top_left[1], start_col: end_col - top_left[0]
     ]
     return mask
 

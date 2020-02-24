@@ -220,7 +220,7 @@ if __name__ == "__main__":
         ]
     )
     # tb = bk.Textbox()
-    tb = bk.randbox()
+    # tb = bk.randbox()
     blg = bk.BoxLayoutGroup([
         bk.Photo(
             "/workspace/CRAFT-pytorch/data/crawled_fb/model/*.jpg", cat="Photo_Rect"
@@ -229,7 +229,8 @@ if __name__ == "__main__":
     ])
 
     samplers = [
-        Sampler([bg, tb], opt)
+        Sampler([bg, bk.randbox(), bk.randbox(), bk.randbox(),
+                 bk.randbox(), bk.randbox()], opt)
         # Sampler([bg, icons, lines], opt),
         # Sampler([bg, lines, icons], opt),
         # Sampler([bg, pg, icons, lines], opt),
@@ -250,11 +251,11 @@ if __name__ == "__main__":
         if i % 100 == 0:
             print(i)
 
-        im, infos, seg = random.choice(samplers).sample()
-        # try:
-        #     im, infos, seg = random.choice(samplers).sample()
-        # except:
-        #     continue
+        # im, infos, seg = random.choice(samplers).sample()
+        try:
+            im, infos, seg = random.choice(samplers).sample()
+        except:
+            continue
         im_path = os.path.join(
             opt.save_to, opt.folder, "images", "{}.png".format(i))
         im.save(im_path)
